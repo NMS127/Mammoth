@@ -849,17 +849,38 @@ void CUIHelper::PaintDisplayAttributes (CG32bitImage &Dest, TArray<SDisplayAttri
 		switch (Attribs[i].iType)
 			{
 			case attribPositive:
-			case attribEnhancement:
 				rgbBackColor = VI.GetColor(colorAreaAdvantage);
 				rgbTextColor = VI.GetColor(colorTextAdvantage);
 				break;
 
 			case attribNegative:
-			case attribWeakness:
 				rgbBackColor = VI.GetColor(colorAreaDisadvantage);
 				rgbTextColor = VI.GetColor(colorTextDisadvantage);
 				break;
-
+			case attribEnhancement:
+				rgbBackColor = VI.GetColor(colorAreaEnhancement);
+				rgbTextColor = VI.GetColor(colorTextEnhancement);
+				break;
+			case attribDegradation:
+				rgbBackColor = VI.GetColor(colorAreaDegradation);
+				rgbTextColor = VI.GetColor(colorTextDegradation);
+				break;
+			case attribControlled:
+				rgbBackColor = VI.GetColor(colorAreaControlled);
+				rgbTextColor = VI.GetColor(colorTextControlled);
+				break;
+			case attribBanned:
+				rgbBackColor = VI.GetColor(colorAreaBanned);
+				rgbTextColor = VI.GetColor(colorTextBanned);
+				break;
+			case attribCustomMagenta:
+				rgbBackColor = VI.GetColor(colorAreaCustomMagenta);
+				rgbTextColor = VI.GetColor(colorTextCustomMagenta);
+				break;
+			case attribCustomBrown:
+				rgbBackColor = VI.GetColor(colorAreaCustomBrown);
+				rgbTextColor = VI.GetColor(colorTextCustomBrown);
+				break;
 			default:
 				rgbBackColor = RGB_MODIFIER_NORMAL_BACKGROUND;
 				rgbTextColor = RGB_MODIFIER_NORMAL_TEXT;
