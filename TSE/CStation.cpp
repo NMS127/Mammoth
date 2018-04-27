@@ -35,7 +35,6 @@
 #define PROPERTY_DOCKING_PORT_COUNT				CONSTLIT("dockingPortCount")
 #define PROPERTY_HP								CONSTLIT("hp")
 #define PROPERTY_IGNORE_FRIENDLY_FIRE			CONSTLIT("ignoreFriendlyFire")
-#define PROPERTY_IMMUTABLE						CONSTLIT("immutable")
 #define PROPERTY_MAX_HP							CONSTLIT("maxHP")
 #define PROPERTY_MAX_STRUCTURAL_HP				CONSTLIT("maxStructuralHP")
 #define PROPERTY_OPEN_DOCKING_PORT_COUNT		CONSTLIT("openDockingPortCount")
@@ -531,6 +530,7 @@ void CStation::CreateDestructionEffect (void)
 			Ctx.pEnhancements->InsertHPBonus(Explosion.iBonus);
 			}
 
+		Ctx.Source = CDamageSource(this, Explosion.iCause);
 		Ctx.vPos = GetPos();
 		Ctx.vVel = GetVel();
 		Ctx.dwFlags = SShotCreateCtx::CWF_EXPLOSION;
@@ -792,6 +792,8 @@ ALERROR CStation::CreateFromType (CSystem *pSystem,
 	//	Load hit points and armor information
 
 	pStation->m_Hull.Init(pType->GetHullDesc());
+	if (!pStation->m_Hull.CanBeHit())
+		pStation->SetCannotBeHit();
 
 	//	Pick an appropriate image. This call will set the shipwreck image, if
 	//	necessary or the variant (if appropriate).
@@ -1614,6 +1616,29 @@ CString CStation::GetStargateID (void) const
 		return NULL_STR;
 
 	return pNode->FindStargateName(m_sStargateDestNode, m_sStargateDestEntryPoint);
+	}
+
+int CStation::GetStealth (void) const 
+
+//	GetStealth
+//
+//	Returns current stealth
+
+	{
+	//	If we're "ghostly" then we always honor stealth.
+
+	if (!m_Hull.CanBeHit())
+		return m_pType->GetStealth();
+
+	//	Otherwise, if we're known and do not move then we're always visible.
+
+	else if (m_fKnown && IsAnchored())
+		return stealthMin;
+
+	//	Otherwise, honor stealth.
+
+	else
+		return m_pType->GetStealth();
 	}
 
 CSpaceObject *CStation::GetTarget (CItemCtx &ItemCtx, bool bNoAutoTarget) const
@@ -2680,6 +2705,15 @@ void CStation::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx
 	Ctx.iRotation = GetRotation();
 	Ctx.iDestiny = GetDestiny();
 
+	//	Calculate visibility
+
+	DWORD byShimmer = CalcSRSVisibility(Ctx);
+
+	//	Known, immobile objects always have a minimum visibility in SRS.
+
+	if (byShimmer && m_fKnown && IsAnchored())
+		byShimmer = Max(byShimmer, (DWORD)60);
+
 	//	Paints overlay background
 
 	m_Overlays.PaintBackground(Dest, x, y, Ctx);
@@ -2719,7 +2753,10 @@ void CStation::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx
 
 	//	Paint
 
-	if (m_fRadioactive)
+	if (byShimmer)
+		Image.PaintImageShimmering(Dest, x, y, iTick, iVariant, byShimmer);
+
+	else if (m_fRadioactive)
 		Image.PaintImageWithGlow(Dest, x, y, iTick, iVariant, CG32bitPixel(0, 255, 0));
 
 	else
