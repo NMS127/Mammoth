@@ -1542,6 +1542,12 @@ void CSpaceObject::Destroy (DestructionTypes iCause, const CDamageSource &Attack
 	if (m_pObjInUpdate == this)
 		m_bObjDestroyed = true;
 
+	//	If resurrection is pending, then clear the destroyed flag. Otherwise, 
+	//	wingmen might leave the player.
+
+	if (Ctx.bResurrectPending && IsPlayer())
+		m_fDestroyed = false;
+
 	DEBUG_CATCH
 	}
 
@@ -4740,9 +4746,9 @@ bool CSpaceObject::HasSpecialAttribute (const CString &sAttrib) const
 //	base class if they do not handle the attribute.
 
 	{
-	if (strStartsWith(sAttrib, SPECIAL_DATA))
+	if (strStartsWith(sAttrib, SPECIAL_CHARACTER))
 		{
-		CString sCharacter = strSubString(sAttrib, SPECIAL_DATA.GetLength());
+		CString sCharacter = strSubString(sAttrib, SPECIAL_CHARACTER.GetLength());
 		DWORD dwUNID = (DWORD)strToInt(sCharacter, 0);
 		if (dwUNID == 0)
 			return false;
