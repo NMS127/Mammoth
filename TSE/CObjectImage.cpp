@@ -16,11 +16,7 @@
 
 #define FIELD_IMAGE_DESC					CONSTLIT("imageDesc")
 
-CObjectImage::CObjectImage (void) : 
-		m_pBitmap(NULL),
-		m_pHitMask(NULL),
-		m_pShadowMask(NULL),
-		m_bLoadError(false)
+CObjectImage::CObjectImage (void)
 
 //	CObjectImage constructor
 
@@ -29,14 +25,9 @@ CObjectImage::CObjectImage (void) :
 
 CObjectImage::CObjectImage (CG32bitImage *pBitmap, bool bFreeBitmap, CG32bitImage *pShadowMask) :
 		m_pBitmap(pBitmap),
-		m_pHitMask(NULL),
 		m_pShadowMask(pShadowMask),
-		m_bPreMult(false),
-		m_bLoadOnUse(false),
 		m_bFreeBitmap(bFreeBitmap),
-		m_bMarked(false),
-		m_bLocked(true),
-		m_bLoadError(false)
+		m_bLocked(true)
 
 //	CObjectImage constructor
 
@@ -49,7 +40,17 @@ CObjectImage::~CObjectImage (void)
 //	CObjectImage destructor
 
 	{
-	//	LATER: For now we assume that either all or not of the bitmaps are
+	CleanUp();
+	}
+
+void CObjectImage::CleanUp (void)
+
+//	CleanUp
+//
+//	Free all images
+
+	{
+	//	LATER: For now we assume that either all or none of the bitmaps are
 	//	owned by us.
 
 	if (m_bFreeBitmap)
@@ -63,6 +64,11 @@ CObjectImage::~CObjectImage (void)
 		if (m_pShadowMask)
 			delete m_pShadowMask;
 		}
+
+	m_pBitmap = NULL;
+	m_pHitMask = NULL;
+	m_pShadowMask = NULL;
+	m_bLocked = false;
 	}
 
 CG32bitImage *CObjectImage::CreateCopy (CString *retsError)
@@ -264,7 +270,7 @@ CG32bitImage *CObjectImage::GetShadowMask (void)
 
 CG32bitImage *CObjectImage::LoadImageFromDb (CResourceDb &ResDb, const CString &sLoadReason, CString *retsError) const
 
-//	GetRawImage
+//	LoadImageFromDb
 //
 //	Returns the image, loading it if necessary.
 //	NOTE: Callers must free result.
@@ -331,6 +337,9 @@ ALERROR CObjectImage::Lock (SDesignLoadCtx &Ctx)
 	//	Note: Since this is called on PrepareBindDesign, we can't
 	//	assume that Ctx has the proper resource database. Thus
 	//	we have to open it ourselves.
+	//
+	//	NOTE 2: Locked images never get filter adjustments from the system, 
+	//	since they are likely to be utility images, like damage textures.
 
 	CG32bitImage *pImage = GetRawImage(NULL_STR, &Ctx.sError);
 	if (pImage == NULL)
@@ -457,25 +466,7 @@ void CObjectImage::OnSweep (void)
 	DEBUG_TRY
 
 	if (!m_bLocked && !m_bMarked)
-		{
-		if (m_pBitmap)
-			{
-			delete m_pBitmap;
-			m_pBitmap = NULL;
-			}
-
-		if (m_pHitMask)
-			{
-			delete m_pHitMask;
-			m_pHitMask = NULL;
-			}
-
-		if (m_pShadowMask)
-			{
-			delete m_pShadowMask;
-			m_pShadowMask = NULL;
-			}
-		}
+		CleanUp();
 
 	DEBUG_CATCH
 	}
@@ -488,24 +479,5 @@ void CObjectImage::OnUnbindDesign (void)
 
 	{
 	if (m_bLoadOnUse)
-		{
-		if (m_pBitmap)
-			{
-			delete m_pBitmap;
-			m_pBitmap = NULL;
-			m_bLocked = false;
-			}
-
-		if (m_pHitMask)
-			{
-			delete m_pHitMask;
-			m_pHitMask = NULL;
-			}
-
-		if (m_pShadowMask)
-			{
-			delete m_pShadowMask;
-			m_pShadowMask = NULL;
-			}
-		}
+		CleanUp();
 	}

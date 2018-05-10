@@ -35,6 +35,7 @@
 #define PROPERTY_DOCKING_PORT_COUNT				CONSTLIT("dockingPortCount")
 #define PROPERTY_HP								CONSTLIT("hp")
 #define PROPERTY_IGNORE_FRIENDLY_FIRE			CONSTLIT("ignoreFriendlyFire")
+#define PROPERTY_IMAGE_SELECTOR					CONSTLIT("imageSelector")
 #define PROPERTY_MAX_HP							CONSTLIT("maxHP")
 #define PROPERTY_MAX_STRUCTURAL_HP				CONSTLIT("maxStructuralHP")
 #define PROPERTY_OPEN_DOCKING_PORT_COUNT		CONSTLIT("openDockingPortCount")
@@ -288,6 +289,12 @@ void CStation::CalcImageModifiers (CCompositeImageModifiers *retModifiers, int *
 
 	if (retModifiers)
 		{
+		//	System filters
+
+		retModifiers->SetFilters(GetSystemFilters());
+
+		//	Damage
+
 		if (ShowStationDamage())
 			retModifiers->SetStationDamage(true);
 
@@ -1517,6 +1524,9 @@ ICCItem *CStation::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 	else if (strEquals(sName, PROPERTY_IGNORE_FRIENDLY_FIRE))
 		return CC.CreateBool(!CanBlacklist());
 
+	else if (strEquals(sName, PROPERTY_IMAGE_SELECTOR))
+		return m_ImageSelector.WriteToItem()->Reference();
+
 	else if (strEquals(sName, PROPERTY_OPEN_DOCKING_PORT_COUNT))
 		return CC.CreateInteger(GetOpenDockingPortCount());
 
@@ -1536,10 +1546,10 @@ ICCItem *CStation::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		return CC.CreateDouble(m_pRotation ? m_pRotation->GetRotationSpeedDegrees(m_pType->GetRotationDesc()) : 0.0);
 
 	else if (strEquals(sName, PROPERTY_SHIP_CONSTRUCTION_ENABLED))
-		return CC.CreateBool(m_fNoConstruction);
+		return CC.CreateBool(!m_fNoConstruction);
 
 	else if (strEquals(sName, PROPERTY_SHIP_REINFORCEMENT_ENABLED))
-		return CC.CreateBool(m_fNoReinforcements);
+		return CC.CreateBool(!m_fNoReinforcements);
 
 	else if (strEquals(sName, PROPERTY_SHOW_MAP_LABEL))
 		return CC.CreateBool(m_Scale != scaleStar && m_Scale != scaleWorld && m_pType->ShowsMapIcon() && !m_fNoMapLabel);
@@ -4479,6 +4489,11 @@ bool CStation::SetProperty (const CString &sName, ICCItem *pValue, CString *rets
 	else if (strEquals(sName, PROPERTY_IGNORE_FRIENDLY_FIRE))
 		{
 		m_fNoBlacklist = !pValue->IsNil();
+		return true;
+		}
+	else if (strEquals(sName, PROPERTY_IMAGE_SELECTOR))
+		{
+		m_ImageSelector.ReadFromItem(ICCItemPtr(pValue->Reference()));
 		return true;
 		}
 	else if (strEquals(sName, PROPERTY_PAINT_LAYER))

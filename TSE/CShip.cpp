@@ -75,6 +75,7 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_MAX_SPEED						CONSTLIT("maxSpeed")
 #define PROPERTY_OPEN_DOCKING_PORT_COUNT		CONSTLIT("openDockingPortCount")
 #define PROPERTY_OPERATING_SPEED				CONSTLIT("operatingSpeed")
+#define PROPERTY_PLAYER_BLACKLISTED				CONSTLIT("playerBlacklisted")
 #define PROPERTY_PLAYER_WINGMAN					CONSTLIT("playerWingman")
 #define PROPERTY_POWER							CONSTLIT("power")
 #define PROPERTY_POWER_USE						CONSTLIT("powerUse")
@@ -382,7 +383,7 @@ void CShip::CalcBounds (void)
 
 	//	Start with image bounds
 
-	const CObjectImageArray &Image = m_pClass->GetImage();
+	const CObjectImageArray &Image = GetImage();
 	const RECT &rcImageRect = Image.GetImageRect();
 
 	int cxWidth = RectWidth(rcImageRect);
@@ -1666,7 +1667,7 @@ ALERROR CShip::CreateFromClass (CSystem *pSystem,
 
 	//	Set the bounds for this object
 
-	const CObjectImageArray &Image = pShip->m_pClass->GetImage();
+	const CObjectImageArray &Image = pShip->GetImage();
 	pShip->SetBounds(Image.GetImageRect());
 
 	//	Initialize docking ports (if any)
@@ -2577,7 +2578,7 @@ void CShip::GetAttachedSectionInfo (TArray<SAttachedSectionInfo> &Result) const
 	int i;
 
 	const CShipInteriorDesc &Desc = m_pClass->GetInteriorDesc();
-	int iScale = m_pClass->GetImage().GetImageViewportSize();
+	int iScale = m_pClass->GetImageViewportSize();
 
 	Result.DeleteAll();
 
@@ -2809,6 +2810,16 @@ CCurrencyAndValue CShip::GetHullValue (void) const
 
 	{
 	return m_pClass->GetHullValue(const_cast<CShip *>(this));
+	}
+
+const CObjectImageArray &CShip::GetImage (void) const
+
+//	GetImage
+//
+//	Returns the ship image
+
+	{
+	return m_pClass->GetImage(GetSystemFilters());
 	}
 
 CString CShip::GetInstallationPhrase (const CItem &Item) const
@@ -3238,6 +3249,9 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		else
 			return CC.CreateString(SPEED_FULL);
 		}
+
+	else if (strEquals(sName, PROPERTY_PLAYER_BLACKLISTED))
+		return CC.CreateBool(m_pController->IsPlayerBlacklisted());
 
 	else if (strEquals(sName, PROPERTY_PLAYER_WINGMAN))
 		return CC.CreateBool(m_pController->IsPlayerWingman());
@@ -3752,7 +3766,7 @@ bool CShip::ImageInObject (const CVector &vObjPos, const CObjectImageArray &Imag
 			iTick,
 			iRotation, 
 			vImagePos,
-			m_pClass->GetImage(),
+			GetImage(),
 			GetSystem()->GetTick(), 
 			m_Rotation.GetFrameIndex(), 
 			vObjPos);
@@ -4257,7 +4271,7 @@ bool CShip::ObjectInObject (const CVector &vObj1Pos, CSpaceObject *pObj2, const 
 
 	{
 	return pObj2->ImageInObject(vObj2Pos,
-			m_pClass->GetImage(),
+			GetImage(),
 			GetSystem()->GetTick(),
 			m_Rotation.GetFrameIndex(),
 			vObj1Pos);
@@ -5134,8 +5148,7 @@ void CShip::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx)
 	Ctx.iRotation = GetRotation();
 	Ctx.iDestiny = GetDestiny();
 
-	const CObjectImageArray *pImage;
-	pImage = &m_pClass->GetImage();
+	const CObjectImageArray &Image = GetImage();
 
 	//	See if we're invisible in SRS
 
@@ -5153,6 +5166,13 @@ void CShip::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx)
 
 	if (!byShimmer)
 		{
+		//	If we're facing down paint the thrust first.
+
+		if (bPaintThrust)
+			m_pClass->PaintThrust(Dest, x, y, Ctx.XForm, m_Rotation.GetFrameIndex(), Ctx.iTick, true /* bInFrontOnly */);
+
+		//	Other effects
+
 		Ctx.bInFront = false;
 		m_Effects.Paint(Ctx, m_pClass->GetEffectsDesc(), dwEffects, Dest, x, y);
 		}
@@ -5165,34 +5185,39 @@ void CShip::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx)
 
 	//	Paint the ship
 
-	m_pClass->Paint(Dest, 
-			x, 
-			y, 
-			Ctx.XForm, 
-			m_Rotation.GetFrameIndex(), 
-			Ctx.iTick,
-			bPaintThrust,
-			IsRadioactive(),
-			byShimmer
-			);
+	//	Paint the body of the ship
+
+	if (byShimmer)
+		Image.PaintImageShimmering(Dest, x, y, Ctx.iTick, m_Rotation.GetFrameIndex(), byShimmer);
+	else if (IsRadioactive())
+		Image.PaintImageWithGlow(Dest, x, y, Ctx.iTick, m_Rotation.GetFrameIndex(), CG32bitPixel(0, 255, 0));
+	else
+		Image.PaintImage(Dest, x, y, Ctx.iTick, m_Rotation.GetFrameIndex());
 
 	//	Paint effects in front of the ship.
 
 	if (!byShimmer)
 		{
+		//	If we need to paint the thrust (because we didn't earlier) do it now.
+
+		if (bPaintThrust)
+			m_pClass->PaintThrust(Dest, x, y, Ctx.XForm, m_Rotation.GetFrameIndex(), Ctx.iTick, false /* bInFrontOnly */);
+
+		//	Other effects
+
 		Ctx.bInFront = true;
 		m_Effects.Paint(Ctx, m_pClass->GetEffectsDesc(), dwEffects, Dest, x, y);
 		}
 
 	//	Paint energy fields
 
-	m_Overlays.Paint(Dest, pImage->GetImageViewportSize(), x, y, Ctx);
+	m_Overlays.Paint(Dest, m_pClass->GetImageViewportSize(), x, y, Ctx);
 
 	//	If paralyzed, draw energy arcs
 
 	if (ShowParalyzedEffect())
 		{
-		Metric rSize = (Metric)RectWidth(m_pClass->GetImage().GetImageRect()) / 2;
+		Metric rSize = (Metric)RectWidth(Image.GetImageRect()) / 2;
 		for (i = 0; i < PARALYSIS_ARC_COUNT; i++)
 			{
 			//	Compute the beginning of this arc
@@ -6221,7 +6246,7 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
         {
         bool bModified;
 
-        m_Overlays.Update(this, m_pClass->GetImage().GetImageViewportSize(), GetRotation(), &bModified);
+        m_Overlays.Update(this, m_pClass->GetImageViewportSize(), GetRotation(), &bModified);
         if (CSpaceObject::IsDestroyedInUpdate())
             return;
         else if (bModified)
@@ -6606,7 +6631,7 @@ void CShip::PaintMapShipCompartments (CG32bitImage &Dest, int x, int y, CMapView
 	{
 	int i;
 
-	int cxWidth = m_pClass->GetImage().GetImageWidth();
+	int cxWidth = GetImage().GetImageWidth();
 	if (cxWidth == 0)
 		return;
 
@@ -6634,9 +6659,9 @@ void CShip::PaintMapShipCompartments (CG32bitImage &Dest, int x, int y, CMapView
 		int xPos, yPos;
 		Trans.Transform(pShip->GetPos(), &xPos, &yPos);
 
-		int cxSize = (int)mathRound(rScale * pShip->GetClass()->GetImage().GetImageWidth());
+		int cxSize = (int)mathRound(rScale * pShip->GetImage().GetImageWidth());
 
-		pShip->GetClass()->GetImage().PaintScaledImage(Dest, 
+		pShip->GetImage().PaintScaledImage(Dest, 
 				xPos, 
 				yPos, 
 				GetSystem()->GetTick(),
@@ -6704,7 +6729,7 @@ bool CShip::PointInObject (const CVector &vObjPos, const CVector &vPointPos)
 
 	//	Ask the image if the point is inside or not
 
-	return m_pClass->GetImage().PointInImage(x, y, GetSystem()->GetTick(), m_Rotation.GetFrameIndex());
+	return GetImage().PointInImage(x, y, GetSystem()->GetTick(), m_Rotation.GetFrameIndex());
 
 	DEBUG_CATCH
 	}
@@ -6727,7 +6752,7 @@ bool CShip::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const
 
 	//	Ask the image if the point is inside or not
 
-	return m_pClass->GetImage().PointInImage(Ctx, x, y);
+	return GetImage().PointInImage(Ctx, x, y);
 
 	DEBUG_CATCH
 	}
@@ -6739,7 +6764,7 @@ void CShip::PointInObjectInit (SPointInObjectCtx &Ctx)
 //	Initializes context for PointInObject (for improved performance in loops)
 
 	{
-	m_pClass->GetImage().PointInImageInit(Ctx, GetSystem()->GetTick(), m_Rotation.GetFrameIndex());
+	GetImage().PointInImageInit(Ctx, GetSystem()->GetTick(), m_Rotation.GetFrameIndex());
 	}
 
 void CShip::ProgramDamage (CSpaceObject *pHacker, const ProgramDesc &Program)
@@ -6769,16 +6794,23 @@ void CShip::ProgramDamage (CSpaceObject *pHacker, const ProgramDesc &Program)
 
 		case progDisarm:
 			{
-			CInstalledDevice *pWeapon = GetNamedDevice(devPrimaryWeapon);
-			if (pWeapon)
-				{
-				//	The chance of success is 50% plus 10% for every level
-				//	that the program is greater than the primary weapon
+			int iTargetLevel;
+			CInstalledDevice *pWeapon;
 
-				int iSuccess = 50 + 10 * (Program.iAILevel - pWeapon->GetLevel());
-				if (mathRandom(1, 100) <= iSuccess)
-					MakeDisarmed(Program.iAILevel * mathRandom(30, 60));
-				}
+			if (pWeapon = GetNamedDevice(devPrimaryWeapon))
+				iTargetLevel = pWeapon->GetLevel();
+			else if (pWeapon = GetNamedDevice(devMissileWeapon))
+				iTargetLevel = pWeapon->GetLevel();
+			else
+				iTargetLevel = GetCyberDefenseLevel();
+
+			//	The chance of success is 50% plus 10% for every level
+			//	that the program is greater than the primary weapon
+
+			int iSuccess = 50 + 10 * (Program.iAILevel - iTargetLevel);
+			if (mathRandom(1, 100) <= iSuccess)
+				MakeDisarmed(Program.iAILevel * mathRandom(30, 60));
+
 			break;
 			}
 
@@ -7656,6 +7688,11 @@ bool CShip::SetProperty (const CString &sName, ICCItem *pValue, CString *retsErr
 
 		return true;
 		}
+	else if (strEquals(sName, PROPERTY_PLAYER_BLACKLISTED))
+		{
+		m_pController->SetPlayerBlacklisted(!pValue->IsNil());
+		return true;
+		}
 	else if (strEquals(sName, PROPERTY_PLAYER_WINGMAN))
 		{
 		SetPlayerWingman(!pValue->IsNil());
@@ -8221,3 +8258,16 @@ void CShip::UpdateInactive (void)
             }
         }
 	}
+
+void CShip::UpdateNoFriendlyFire(void)
+
+//	UpdateNoFriendlyFire
+//
+//	Updates NoFriendlyFire based on AISettings
+
+{
+	if (m_pController->GetAISettings()->NoFriendlyFire())
+		SetNoFriendlyFire();
+	else
+		ClearNoFriendlyFire();
+}
