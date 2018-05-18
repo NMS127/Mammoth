@@ -446,83 +446,6 @@ class DiceRange
 		int m_iBonus;
 	};
 
-class CAttributeDataBlock
-	{
-	public:
-        enum ETransferOptions
-            {
-            transCopy,
-            transIgnore,
-            };
-
-        struct STransferDesc
-            {
-            STransferDesc (void) :
-                    iOption(transCopy)
-                { }
-
-            ETransferOptions iOption;
-            };
-
-		CAttributeDataBlock (void);
-		CAttributeDataBlock (const CAttributeDataBlock &Src);
-		CAttributeDataBlock &operator= (const CAttributeDataBlock &Src);
-		~CAttributeDataBlock (void);
-
-		void Copy (const CAttributeDataBlock &Src, const TSortMap<CString, STransferDesc> &Options);
-		inline void DeleteAll (void) { CleanUp(); }
-		bool FindData (const CString &sAttrib, const CString **retpData = NULL) const;
-		ICCItem *FindDataAsItem (const CString &sAttrib) const;
-		bool FindObjRefData (CSpaceObject *pObj, CString *retsAttrib = NULL) const;
-		const CString &GetData (const CString &sAttrib) const;
-        inline const CString &GetData (int iIndex) const { return m_Data[iIndex].sData; }
-		ICCItem *GetDataAsItem (const CString &sAttrib) const;
-		inline const CString &GetDataAttrib (int iIndex) const { return m_Data.GetKey(iIndex); }
-		inline int GetDataCount (void) const { return m_Data.GetCount(); }
-		CSpaceObject *GetObjRefData (const CString &sAttrib) const;
-        void IncData (const CString &sAttrib, ICCItem *pValue = NULL, ICCItem **retpNewValue = NULL);
-		bool IsDataNil (const CString &sAttrib) const;
-		inline bool IsEmpty (void) const { return (m_Data.GetCount() == 0 && m_pObjRefData == NULL); }
-		bool IsEqual (const CAttributeDataBlock &Src);
-		void LoadObjReferences (CSystem *pSystem);
-		void MergeFrom (const CAttributeDataBlock &Src);
-		void OnObjDestroyed (CSpaceObject *pObj);
-		void OnSystemChanged (CSystem *pSystem);
-		void ReadFromStream (SLoadCtx &Ctx);
-		void ReadFromStream (IReadStream *pStream);
-		void SetData (const CString &sAttrib, const CString &sData);
-		void SetFromXML (CXMLElement *pData);
-		void SetObjRefData (const CString &sAttrib, CSpaceObject *pObj);
-		void WriteToStream (IWriteStream *pStream, CSystem *pSystem = NULL);
-
-		static const CAttributeDataBlock Null;
-
-	private:
-        struct SDataEntry
-            {
-            CString sData;                  //  Serialized data
-            };
-
-		struct SObjRefEntry
-			{
-			CString sName;
-			CSpaceObject *pObj;
-			DWORD dwObjID;
-
-			SObjRefEntry *pNext;
-			};
-
-		void CleanUp (void);
-        void CleanUpObjRefs (void);
-		void Copy (const CAttributeDataBlock &Copy);
-        void CopyObjRefs (SObjRefEntry *pSrc);
-		bool IsXMLText (const CString &sData) const;
-        void ReadDataEntries (IReadStream *pStream);
-
-        TSortMap<CString, SDataEntry> m_Data;
-		SObjRefEntry *m_pObjRefData;			//	Custom pointers to CSpaceObject *
-	};
-
 class CCurrencyBlock
 	{
 	public:
@@ -648,6 +571,7 @@ class CDamageSource
 		DWORD GetSovereignUNID (void) const;
 		inline bool HasDamageCause (void) const { return ((m_pSource && !IsObjID()) || !m_sSourceName.IsBlank()); }
 		bool HasSource (void) const;
+		inline bool IsAutomatedWeapon (void) const { return ((m_dwFlags & FLAG_IS_AUTOMATED_WEAPON) ? true : false); }
 		bool IsCausedByEnemyOf (CSpaceObject *pObj) const;
 		bool IsCausedByFriendOf (CSpaceObject *pObj) const;
 		bool IsCausedByNonFriendOf (CSpaceObject *pObj) const;
@@ -656,10 +580,12 @@ class CDamageSource
 		bool IsEnemy (CDamageSource &Src) const;
 		bool IsEqual (const CDamageSource &Src) const;
 		bool IsEqual (CSpaceObject *pSrc) const;
+		bool IsFriend (CSovereign *pSovereign) const;
 		inline bool IsPlayer (void) const { return ((m_dwFlags & FLAG_IS_PLAYER) ? true : false); }
 		void OnLeaveSystem (void);
 		void OnObjDestroyed (CSpaceObject *pObjDestroyed);
 		void ReadFromStream (SLoadCtx &Ctx);
+		inline void SetAutomatedWeapon (bool bValue = true) { if (bValue) m_dwFlags |= FLAG_IS_AUTOMATED_WEAPON; else m_dwFlags &= FLAG_IS_AUTOMATED_WEAPON; }
 		inline void SetCause (DestructionTypes iCause) { m_iCause = iCause; }
 		void SetObj (CSpaceObject *pSource);
 		void WriteToStream (CSystem *pSystem, IWriteStream *pStream);
@@ -673,6 +599,8 @@ class CDamageSource
 			FLAG_IS_PLAYER_SUBORDINATE		= 0x00000002,
 			FLAG_IS_PLAYER_CAUSED			= 0x00000004,
 			FLAG_OBJ_ID						= 0x00000008,	//	m_pSource is an ID, not a pointer
+
+			FLAG_IS_AUTOMATED_WEAPON		= 0x00000010,	//	Source is a missile-defense system.
 			};
 
 		inline DWORD GetRawObjID (void) const { return (DWORD)m_pSource; }
@@ -1576,7 +1504,6 @@ class CFormulaText
 //	Miscellaneous utility functions
 
 CString AppendModifiers (const CString &sModifierList1, const CString &sModifierList2);
-CString ComposePlayerNameString (const CString &sString, const CString &sPlayerName, int iGenome, ICCItem *pArgs = NULL);
 CString GetLoadStateString (ELoadStates iState);
 Metric GetScale (CXMLElement *pObj);
 bool HasModifier (const CString &sModifierList, const CString &sModifier);

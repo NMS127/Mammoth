@@ -4,6 +4,11 @@
 
 #include "PreComp.h"
 
+#ifdef DEBUG_ON_CREATE_TIME
+#include <stdio.h>
+static DWORD g_dwTotalTime = 0;
+#endif
+
 #define MAX_DELTA								(2.0 * g_KlicksPerPixel)
 #define MAX_DELTA2								(MAX_DELTA * MAX_DELTA)
 #define MAX_DELTA_VEL							(g_KlicksPerPixel / 2.0)
@@ -248,7 +253,6 @@ CSpaceObject::CSpaceObject (IObjectClass *pClass) : CObject(pClass),
 		m_fNoFriendlyFire(false),
 		m_fTimeStop(false),
 		m_fPlayerTarget(false),
-		m_fAutomatedWeapon(false),
 		m_fHasOnObjDockedEvent(false),
 		m_fOnCreateCalled(false),
 		m_fNoFriendlyTarget(false),
@@ -889,12 +893,8 @@ bool CSpaceObject::CanFireOnObjHelper (CSpaceObject *pObj)
 	{
 	return (
 		//	We cannot hit our friends (if our source can't)
-		//	(NOTE: we check for sovereign as opposed to IsEnemy because
-		//	it is faster. For our purposes, same sovereign is what we want).
-		(CanHitFriends() || GetSovereign() != pObj->GetSovereign())
-		
-		//	We cannot hit if the obj cannot be hit by friends
-		&& (pObj->CanBeHitByFriends() || GetSovereign() != pObj->GetSovereign()));
+		(CanHitFriends() && pObj->CanBeHitByFriends()) || GetSovereign() == NULL || !GetSovereign()->IsFriend(pObj->GetSovereign())
+		);
 	}
 
 bool CSpaceObject::CanInstallItem (const CItem &Item, int iSlot, InstallItemResults *retiResult, CString *retsResult, CItem *retItemToReplace)
@@ -1136,7 +1136,7 @@ void CSpaceObject::CreateFromStream (SLoadCtx &Ctx, CSpaceObject **retpObj)
 	pObj->m_fNoFriendlyFire =			((dwLoad & 0x00000100) ? true : false);
 	pObj->m_fTimeStop =					((dwLoad & 0x00000200) ? true : false);
 	pObj->m_fPlayerTarget =				((dwLoad & 0x00000400) ? true : false);
-	pObj->m_fAutomatedWeapon =			((dwLoad & 0x00000800) ? true : false);
+	//	0x00000800 unused since version 158
 	pObj->m_fNoFriendlyTarget =			((dwLoad & 0x00001000) ? true : false);
 	pObj->m_fPlayerDestination =		((dwLoad & 0x00002000) ? true : false);
 	pObj->m_fShowDistanceAndBearing =	((dwLoad & 0x00004000) ? true : false);
@@ -1257,6 +1257,7 @@ ALERROR CSpaceObject::CreateRandomItems (IItemGenerator *pItems, CSystem *pSyste
 		CItemListManipulator ItemList(GetItemList());
 		SItemAddCtx Ctx(ItemList);
 		Ctx.pSystem = pSystem;
+		Ctx.pDest = this;
 		Ctx.vPos = GetPos();
 		Ctx.iLevel = (Ctx.pSystem ? Ctx.pSystem->GetLevel() : 1);
 
@@ -2340,6 +2341,10 @@ void CSpaceObject::FireOnCreate (const SOnCreate &OnCreate)
 	if (!m_fOnCreateCalled 
 			&& FindEventHandler(ON_CREATE_EVENT, &Event))
 		{
+#ifdef DEBUG_ON_CREATE_TIME
+		DWORD dwStart = ::GetTickCount();
+#endif
+
 		CCodeChainCtx Ctx;
 		Ctx.SetSystemCreateCtx(OnCreate.pCreateCtx);
 
@@ -2355,6 +2360,11 @@ void CSpaceObject::FireOnCreate (const SOnCreate &OnCreate)
 		if (pResult->IsError())
 			ReportEventError(ON_CREATE_EVENT, pResult);
 		Ctx.Discard(pResult);
+
+#ifdef DEBUG_ON_CREATE_TIME
+		g_dwTotalTime += ::sysGetTicksElapsed(dwStart);
+		printf("[%x] OnCreate: %s (%d)\n", GetID(), (LPSTR)GetNounPhrase(), g_dwTotalTime);
+#endif
 		}
 
 	//	Remember that we already called OnCreate. This is helpful in case we
@@ -3392,14 +3402,8 @@ int CSpaceObject::GetDataInteger (const CString &sAttrib) const
 //	Get integer value
 
 	{
-	CCodeChain &CC = g_pUniverse->GetCC();
-
-	CString sData = GetData(sAttrib);
-	ICCItem *pResult = CC.Link(sData, 0, NULL);
-	int iResult = pResult->GetIntegerValue();
-	pResult->Discard(&CC);
-
-	return iResult;
+	ICCItemPtr pValue = GetData(sAttrib);
+	return pValue->GetIntegerValue();
 	}
 
 CString CSpaceObject::GetDesiredCommsKey (void) const
@@ -3535,7 +3539,7 @@ CDesignType *CSpaceObject::GetFirstDockScreen (CString *retsScreen, ICCItemPtr *
 	return GetDefaultDockScreen(retsScreen);
 	}
 
-const CString &CSpaceObject::GetGlobalData (const CString &sAttribute) const
+ICCItemPtr CSpaceObject::GetGlobalData (const CString &sAttribute) const
 
 //	GetGlobalData
 //
@@ -3544,7 +3548,7 @@ const CString &CSpaceObject::GetGlobalData (const CString &sAttribute) const
 	{
 	CDesignType *pType = GetType();
 	if (pType == NULL)
-		return NULL_STR;
+		return ICCItemPtr(g_pUniverse->GetCC().CreateNil());
 
 	return pType->GetGlobalData(sAttribute);
 	}
@@ -4145,6 +4149,20 @@ CSpaceObject *CSpaceObject::GetOrderGiver (DestructionTypes iCause)
 		return OnGetOrderGiver();
 	}
 
+ICCItemPtr CSpaceObject::GetOverlayData (DWORD dwID, const CString &sAttrib) const
+
+//	GetOverlayData
+//
+//	Returns data for overlay
+
+	{
+	const COverlayList *pOverlays = GetOverlays();
+	if (pOverlays == NULL)
+		return ICCItemPtr(g_pUniverse->GetCC().CreateNil());
+
+	return pOverlays->GetData(dwID, sAttrib);
+	}
+
 ICCItem *CSpaceObject::GetOverlayProperty (CCodeChainCtx *pCCCtx, DWORD dwID, const CString &sName)
 
 //	GetOverlayProperty
@@ -4429,19 +4447,19 @@ CSovereign *CSpaceObject::GetSovereignToDefend (void) const
 		return GetSovereign();
 	}
 
-const CString &CSpaceObject::GetStaticData (const CString &sAttrib)
+ICCItemPtr CSpaceObject::GetStaticData (const CString &sAttrib)
 
 //	GetStaticData
 //
 //	Returns static data
 
 	{
-	const CString *pData;
+	ICCItemPtr pData;
 
 	//	Check our override
 
-	if (m_pOverride && m_pOverride->FindStaticData(sAttrib, &pData))
-		return *pData;
+	if (m_pOverride && m_pOverride->FindStaticData(sAttrib, pData))
+		return pData;
 
 	//	Check our type
 
@@ -4451,7 +4469,7 @@ const CString &CSpaceObject::GetStaticData (const CString &sAttrib)
 	
 	//	Not found
 
-	return NULL_STR;
+	return ICCItemPtr(g_pUniverse->GetCC().CreateNil());
 	}
 
 CG32bitPixel CSpaceObject::GetSymbolColor (void)
@@ -5451,6 +5469,8 @@ bool CSpaceObject::IsLineOfFireClear (CInstalledDevice *pWeapon,
 
 	CVector vTarget = (pTarget ? pTarget->GetPos() : vSource);
 	Metric rMaxDist2 = rDistance * rDistance;
+	bool bCheckTargetOverStation = (pTarget && pTarget->CanThrust());
+	bool bTargetIsStation = (pTarget && pTarget->GetCategory() == catStation);
 
 	//	See if any friendly object is in the line of fire
 
@@ -5471,16 +5491,27 @@ bool CSpaceObject::IsLineOfFireClear (CInstalledDevice *pWeapon,
 			{
 			CSpaceObject::Categories iCategory = pObj->GetCategory();
 
-			//	If this is an enemy and it is a ship, then it is OK 
-			//	to hit it (we only hit stations if we're aiming for them).
+			//	If this is an enemy then see if it is OK to hit them.
 
-			if (IsEnemy(pObj) && iCategory == catShip)
-				continue;
+			if (IsEnemy(pObj))
+				{
+				//	If this is another ship, then it is OK to hit.
+
+				if (iCategory == catShip)
+					continue;
+
+				//	If the target is a station, then it is OK to hit other 
+				//	stations of the same sovereign.
+
+				if (bTargetIsStation && pTarget->GetSovereign() == pObj->GetSovereign())
+					continue;
+				}
 
 			//	If the target is right on top of a station, then we
 			//	cannot fire.
 
-			if (iCategory == catStation)
+			if (iCategory == catStation
+					&& bCheckTargetOverStation)
 				{
 				//	Compute the distance of the object from us and from
 				//	the target.
@@ -5948,16 +5979,11 @@ bool CSpaceObject::MissileCanHitObj (CSpaceObject *pObj, CDamageSource &Source, 
 				&& pDesc->CanHit(pObj)
 
 				//	We cannot hit our friends (if our source can't)
-				//	(NOTE: we check for sovereign as opposed to IsEnemy because
-				//	it is faster. For our purposes, same sovereign is what we want).
-				&& ((CanHitFriends() && Source.CanHitFriends()) || Source.GetSovereign() != pObj->GetSovereign())
+				&& ((CanHitFriends() && Source.CanHitFriends() && pObj->CanBeHitByFriends()) || !Source.IsFriend(pObj->GetSovereign()))
 
 				//	If our source is the player, then we cannot hit player wingmen
 
-				&& Source.CanHit(pObj)
-				
-				//	We cannot hit if the object cannot be hit by friends
-				&& (pObj->CanBeHitByFriends() || Source.GetSovereign() != pObj->GetSovereign()));
+				&& Source.CanHit(pObj));
 		}
 
 	//	If we don't have a source...
@@ -7259,12 +7285,8 @@ void CSpaceObject::SetDataInteger (const CString &sAttrib, int iValue)
 
 	{
 	CCodeChain &CC = g_pUniverse->GetCC();
-
-	ICCItem *pValue = CC.CreateInteger(iValue);
-	CString sData = CC.Unlink(pValue);
-	pValue->Discard(&CC);
-
-	SetData(sAttrib, sData);
+	ICCItemPtr pValue = ICCItemPtr(CC.CreateInteger(iValue));
+	SetData(sAttrib, pValue);
 	}
 
 void CSpaceObject::SetEventFlags (void)
@@ -7285,7 +7307,7 @@ void CSpaceObject::SetEventFlags (void)
 	OnSetEventFlags();
 	}
 
-void CSpaceObject::SetGlobalData (const CString &sAttribute, const CString &sData)
+void CSpaceObject::SetGlobalData (const CString &sAttribute, ICCItem *pData)
 
 //	SetGlobalData
 //
@@ -7296,7 +7318,7 @@ void CSpaceObject::SetGlobalData (const CString &sAttribute, const CString &sDat
 	if (pType == NULL)
 		return;
 
-	pType->SetGlobalData(sAttribute, sData);
+	pType->SetGlobalData(sAttribute, pData);
 	}
 
 bool CSpaceObject::SetItemProperty (const CItem &Item, const CString &sName, ICCItem *pValue, int iCount, CItem *retItem, CString *retsError)
@@ -8031,7 +8053,7 @@ void CSpaceObject::WriteToStream (IWriteStream *pStream)
 	dwSave |= (m_fNoFriendlyFire			? 0x00000100 : 0);
 	dwSave |= (m_fTimeStop					? 0x00000200 : 0);
 	dwSave |= (m_fPlayerTarget				? 0x00000400 : 0);
-	dwSave |= (m_fAutomatedWeapon			? 0x00000800 : 0);
+	//	0x00000800 unused
 	dwSave |= (m_fNoFriendlyTarget			? 0x00001000 : 0);
 	dwSave |= (m_fPlayerDestination			? 0x00002000 : 0);
 	dwSave |= (m_fShowDistanceAndBearing	? 0x00004000 : 0);

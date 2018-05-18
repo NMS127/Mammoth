@@ -379,7 +379,11 @@ ICCItem *fnStationType (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData);
 
 ICCItem *fnSystemCreate (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
 
-ICCItem *fnRollDice (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
+#define FN_ROLL_DICE					1
+#define FN_ROLL_CHANCE					2
+
+ICCItem *fnRollDice (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData);
+
 ICCItem *fnSystemCreateEffect (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
 ICCItem *fnSystemCreateMarker (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
 ICCItem *fnSystemCreateShip (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
@@ -1042,9 +1046,13 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"(fmtVerb verb pluralize) -> string",
 			"sv",	0, },
 
-		{	"rollDice",						fnRollDice,		0,
+		{	"rollChance",					fnRollDice,		FN_ROLL_CHANCE,
+			"(rollChance percentChance [rolls]) -> True/Nil",
+			"n*",	0,	},
+
+		{	"rollDice",						fnRollDice,		FN_ROLL_DICE,
 			"(rollDice count sides [bonus]) -> value",
-			NULL,	PPFLAG_SIDEEFFECTS,	},
+			"ii*",	0,	},
 
 		//	Ship functions
 		//	--------------
@@ -1282,9 +1290,9 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"(shpOrderImmediate ship order [target] [count]) -> True/Nil",
 			"is*",	PPFLAG_SIDEEFFECTS,	},
 
-		{	"shpRechargeShield",			fnShipSetOld,		FN_SHIP_RECHARGE_SHIELD,
-			"(shpRechargeShield ship hpToRecharge) -> True/Nil",
-			NULL,	PPFLAG_SIDEEFFECTS,	},
+		{	"shpRechargeShield",			fnShipSet,		FN_SHIP_RECHARGE_SHIELD,
+			"(shpRechargeShield ship [hpToRecharge]) -> shield hp",
+			"i*",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"shpRefuelFromItem",			fnShipSetOld,		FN_SHIP_REFUEL_FROM_ITEM,
 			"(shpRefuelFromItem ship item) -> True/Nil",
@@ -2662,6 +2670,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			
 			"criteria is a string that must specify one or more of the following categories:\n\n"
 			
+			"   *           Include all categories\n"
 			"   b           Include beams\n"
 			"   G           Include ONLY stargates\n"
 			"   G:xyz;      Include ONLY stargate with ID 'xyz'\n"
@@ -2705,9 +2714,9 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   X           Only objects whose target is the source\n"
 			"   Y           Only objects angry at (or enemies of) the source\n"
 			"   Z           Exclude the player\n"
-			"   +xyz;       Exclude objects without the given attribute\n"
-			"   -xyz;       Exclude objects with the given attribute\n"
-			"   =n          Only objects of level n. You can also use >, <, >=, and <=.\n\n"
+			"   +xyz;       Only objects with attribute 'xyz'\n"
+			"   -xyz;       Exclude objects with attribute 'xyz'\n"
+			"   =n;         Only objects of level n. You can also replace = with &gt;, &lt;, &gt;=, or &lt;=.\n\n"
 			
 			"   +/-data:xyz;        Include only/exclude objects with data 'xyz'\n"
 			"   +/-isPlanet:true;   Include only/exclude planets\n"
@@ -4194,8 +4203,11 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 	//	The first argument is an UNID
 
-	CDesignType *pType = g_pUniverse->FindDesignType(pArgs->GetElement(0)->GetIntegerValue());
-	if (pType == NULL)
+	CDesignType *pType;
+	if (pArgs->GetElement(0)->IsNil())
+		return pCC->CreateNil();
+
+	else if ((pType = g_pUniverse->FindDesignType(pArgs->GetElement(0)->GetIntegerValue())) == NULL)
 		{
 		if (dwData == FN_DESIGN_GET_PROPERTY 
 				|| pArgs->GetElement(0)->GetIntegerValue() == 0)
@@ -4264,19 +4276,13 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			return CreateResultFromDataField(*pCC, pType->GetDataField(pArgs->GetElement(1)->GetStringValue()));
 
 		case FN_DESIGN_GET_GLOBAL_DATA:
-			{
-			CString sData = pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue());
-			return pCC->Link(sData, 0, NULL);
-			}
+			return pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_DESIGN_GET_PROPERTY:
 			return pType->GetProperty(*pCtx, pArgs->GetElement(1)->GetStringValue());
 
 		case FN_DESIGN_GET_STATIC_DATA:
-			{
-			CString sData = pType->GetStaticData(pArgs->GetElement(1)->GetStringValue());
-			return pCC->Link(sData, 0, NULL);
-			}
+			return pType->GetStaticData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_DESIGN_GET_XML:
 			{
@@ -4297,10 +4303,7 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			{
 			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
             ICCItem *pValue = (pArgs->GetCount() > 2 ? pArgs->GetElement(2) : NULL);
-
-            ICCItem *pResult;
-            pType->IncGlobalData(sAttrib, pValue, &pResult);
-            return pResult;
+            return pType->IncGlobalData(sAttrib, pValue)->Reference();
 			}
 
 		case FN_DESIGN_MARK_IMAGES:
@@ -4324,8 +4327,7 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			if (sAttrib.IsBlank())
 				return pCC->CreateNil();
 
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-			pType->SetGlobalData(sAttrib, sData);
+			pType->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			return pCC->CreateTrue();
 			}
 
@@ -4415,7 +4417,7 @@ ICCItem *fnFormat (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			{
 			CString sText = pArgs->GetElement(0)->GetStringValue();
 			ICCItem *pData = (pArgs->GetCount() > 1 ? pArgs->GetElement(1) : NULL);
-			return pCC->CreateString(::ComposePlayerNameString(sText, g_pUniverse->GetPlayerName(), g_pUniverse->GetPlayerGenome(), pData));
+			return pCC->CreateString(CLanguage::Compose(sText, pData));
 			}
 
 		case FN_CURRENCY:
@@ -4704,11 +4706,7 @@ ICCItem *fnItemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			}
 
 		case FN_ITEM_DATA:
-			{
-			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
-			pResult = pCC->Link(Item.GetData(sAttrib), 0, NULL);
-			break;
-			}
+			return Item.GetDataAsItem(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_ITEM_IMAGE_DESC:
 			pResult = CreateListFromImage(*pCC, pType->GetImage());
@@ -4770,18 +4768,10 @@ ICCItem *fnItemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			}
 
 		case FN_ITEM_GET_STATIC_DATA:
-			{
-			CString sData = pType->GetStaticData(pArgs->GetElement(1)->GetStringValue());
-			pResult = pCC->Link(sData, 0, NULL);
-			break;
-			}
+			return pType->GetStaticData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_ITEM_GET_GLOBAL_DATA:
-			{
-			CString sData = pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue());
-			pResult = pCC->Link(sData, 0, NULL);
-			break;
-			}
+			return pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_ITEM_GET_TYPE_DATA:
 			{
@@ -4794,10 +4784,7 @@ ICCItem *fnItemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Otherwise, we get global data from the design type
 
 			else
-				{
-				CString sData = pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue());
-				pResult = pCC->Link(sData, 0, NULL);
-				}
+				return pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 			break;
 			}
@@ -4811,8 +4798,7 @@ ICCItem *fnItemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 				break;
 				}
 
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-			pType->SetGlobalData(sAttrib, sData);
+			pType->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			pResult = pCC->CreateTrue();
 			break;
 			}
@@ -5027,12 +5013,11 @@ ICCItem *fnItemSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 		case FN_ITEM_DATA:
 			{
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
 			int iCount = (pArgs->GetCount() > 3 ? Max(0, pArgs->GetElement(3)->GetIntegerValue()) : -1);
 			if (iCount == 0)
 				return pCC->CreateNil();
 
-			Item.SetData(pArgs->GetElement(1)->GetStringValue(), sData);
+			Item.SetData(pArgs->GetElement(1)->GetStringValue(), pArgs->GetElement(2));
 
 			if (iCount != -1)
 				Item.SetCount(iCount);
@@ -5277,40 +5262,28 @@ ICCItem *fnObjData (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 		{
 		case FN_OBJ_GETDATA:
 			{
-			CString sData = pObj->GetData(sAttrib);
-
-			//	For backwards compatibility we reroute rin to the proper place
-
-			if (sData.IsBlank() && pObj->IsPlayer() && strEquals(sAttrib, CONSTLIT("rins")))
-				sData = CEconomyType::RinHackGet(pObj);
-
-			//	Result
-
-			pResult = pCC->Link(sData, 0, NULL);
+			pResult = pObj->GetData(sAttrib)->Reference();
 			pArgs->Discard(pCC);
 			break;
 			}
 
 		case FN_OBJ_GET_STATIC_DATA:
 			{
-			CString sData = pObj->GetStaticData(sAttrib);
-			pResult = pCC->Link(sData, 0, NULL);
+			pResult = pObj->GetStaticData(sAttrib)->Reference();
 			pArgs->Discard(pCC);
 			break;
 			}
 
 		case FN_OBJ_GET_STATIC_DATA_FOR_STATION_TYPE:
 			{
-			CString sData = pStationType->GetStaticData(sAttrib);
-			pResult = pCC->Link(sData, 0, NULL);
+			pResult = pStationType->GetStaticData(sAttrib)->Reference();
 			pArgs->Discard(pCC);
 			break;
 			}
 
 		case FN_OBJ_GET_GLOBAL_DATA:
 			{
-			CString sData = pObj->GetGlobalData(sAttrib);
-			pResult = pCC->Link(sData, 0, NULL);
+			pResult = pObj->GetGlobalData(sAttrib)->Reference();
 			pArgs->Discard(pCC);
 			break;
 			}
@@ -5335,17 +5308,7 @@ ICCItem *fnObjData (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 					}
 				}
 #endif
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-
-			//	For backwards compatibility we reroute rin to the proper place
-
-			if (pObj->IsPlayer() && strEquals(sAttrib, CONSTLIT("rins")))
-				CEconomyType::RinHackSet(pObj, sData);
-
-			//	Otherwise, we set the data to the object
-
-			else
-				pObj->SetData(sAttrib, sData);
+			pObj->SetData(sAttrib, pArgs->GetElement(2));
 
 			//	Done
 
@@ -5356,8 +5319,7 @@ ICCItem *fnObjData (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 
 		case FN_OBJ_SET_GLOBAL_DATA:
 			{
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-			pObj->SetGlobalData(sAttrib, sData);
+			pObj->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			pResult = pCC->CreateTrue();
 			pArgs->Discard(pCC);
 			break;
@@ -5365,19 +5327,7 @@ ICCItem *fnObjData (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 
 		case FN_OBJ_INCREMENT_DATA:
 			{
-			//	For backwards compatibility we reroute rin
-
-            if (pObj->GetData(sAttrib).IsBlank() && pObj->IsPlayer() && strEquals(sAttrib, CONSTLIT("rins")))
-				{
-			    int iIncrement = (pArgs->GetCount() > 2 ? pArgs->GetElement(2)->GetIntegerValue() : 1);
-				pResult = pCC->CreateInteger((int)CEconomyType::RinHackInc(pObj, iIncrement));
-				}
-
-            //  Increment
-
-            else
-                pObj->IncData(sAttrib, (pArgs->GetCount() > 2 ? pArgs->GetElement(2) : NULL), &pResult);
-
+			pResult = pObj->IncData(sAttrib, (pArgs->GetCount() > 2 ? pArgs->GetElement(2) : NULL))->Reference();
 			pArgs->Discard(pCC);
 			break;
 			}
@@ -6352,8 +6302,7 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			if (pCharacter == NULL)
 				return pCC->CreateNil();
 
-			CString sData = pCharacter->GetGlobalData(pArgs->GetElement(1)->GetStringValue());
-			return pCC->Link(sData, 0, NULL);
+			return pCharacter->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 			}
 
 		case FN_OBJ_GET_DETECT_RANGE:
@@ -6491,8 +6440,7 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			{
 			DWORD dwID = (DWORD)pArgs->GetElement(1)->GetIntegerValue();
 			CString sAttrib = pArgs->GetElement(2)->GetStringValue();
-			CString sData = pObj->GetOverlayData(dwID, sAttrib);
-			return pCC->Link(sData, 0, NULL);
+			return pObj->GetOverlayData(dwID, sAttrib)->Reference();
 			}
 
 		case FN_OBJ_GET_OVERLAY_POS:
@@ -6798,9 +6746,7 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
             if (pOverlays == NULL)
                 return pCC->CreateNil();
 
-            ICCItem *pResult;
-            pOverlays->IncData(dwID, sAttrib, (pArgs->GetCount() > 3 ? pArgs->GetElement(3) : NULL), &pResult);
-            return pResult;
+            return pOverlays->IncData(dwID, sAttrib, (pArgs->GetCount() > 3 ? pArgs->GetElement(3) : NULL))->Reference();
 			}
 
 		case FN_OBJ_IS_ANGRY_AT:
@@ -6881,9 +6827,8 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			{
 			DWORD dwID = (DWORD)pArgs->GetElement(1)->GetIntegerValue();
 			CString sAttrib = pArgs->GetElement(2)->GetStringValue();
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(3));
 
-			pObj->SetOverlayData(dwID, sAttrib, sData);
+			pObj->SetOverlayData(dwID, sAttrib, pArgs->GetElement(3));
 			return pCC->CreateTrue();
 			}
 
@@ -8190,8 +8135,7 @@ ICCItem *fnObjSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			if (sAttrib.IsBlank())
 				return pCC->CreateNil();
 
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-			pCharacter->SetGlobalData(sAttrib, sData);
+			pCharacter->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			return pCC->CreateTrue();
 			}
 
@@ -8230,8 +8174,6 @@ ICCItem *fnObjSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Get the attribute
 
 			CString sAttrib = pArgs->GetElement(2)->GetStringValue();
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(3));
-
 			int iCount = (pArgs->GetCount() > 4 ? Max(0, pArgs->GetElement(4)->GetIntegerValue()) : 1);
 
 			//	Select the item
@@ -8247,7 +8189,7 @@ ICCItem *fnObjSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 			//	Set the data
 
-			ItemList.SetDataAtCursor(sAttrib, sData, iCount);
+			ItemList.SetDataAtCursor(sAttrib, pArgs->GetElement(3), iCount);
 
 			//	Update the object
 
@@ -9056,7 +8998,7 @@ ICCItem *fnResourceGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 	return pCC->CreateNil();
 	}
 
-ICCItem *fnRollDice (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
+ICCItem *fnRollDice (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 //	fnRollDice
 //
@@ -9064,28 +9006,48 @@ ICCItem *fnRollDice (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 
 	{
 	CCodeChain *pCC = pEvalCtx->pCC;
-	ICCItem *pArgs;
+	CCodeChainCtx *pCtx = (CCodeChainCtx *)pEvalCtx->pExternalCtx;
+	if (pCtx == NULL)
+		return pCC->CreateError(ERR_NO_CODE_CHAIN_CTX);
 
-	//	Evaluate the arguments and validate them
+	switch (dwData)
+		{
+		case FN_ROLL_CHANCE:
+			{
+			Metric rProb = pArgs->GetElement(0)->GetDoubleValue() / 100.0;
+			
+			//	If we're trying multiple times, then we adjust the probability
 
-	pArgs = pCC->EvaluateArgs(pEvalCtx, pArguments, CONSTLIT("ii*"));
-	if (pArgs->IsError())
-		return pArgs;
+			if (pArgs->GetCount() > 1)
+				{
+				Metric rRolls = pArgs->GetElement(1)->GetDoubleValue();
+				if (rRolls <= 0.0)
+					return pCC->CreateError(CONSTLIT("Number of rolls must be positive."), pArgs->GetElement(1));
 
-	//	Arguments
+				rProb = 1.0 - pow(1.0 - rProb, rRolls);
+				}
 
-	int iCount = pArgs->GetElement(0)->GetIntegerValue();
-	int iFaces = pArgs->GetElement(1)->GetIntegerValue();
-	int iBonus = 0;
-	if (pArgs->GetElement(2))
-		iBonus = pArgs->GetElement(2)->GetIntegerValue();
+			//	Roll
 
-	pArgs->Discard(pCC);
+			return pCC->CreateBool(mathRandomDouble() <= rProb);
+			}
 
-	//	Roll Dice
+		case FN_ROLL_DICE:
+			{
+			int iCount = pArgs->GetElement(0)->GetIntegerValue();
+			int iFaces = pArgs->GetElement(1)->GetIntegerValue();
+			int iBonus = 0;
+			if (pArgs->GetElement(2))
+				iBonus = pArgs->GetElement(2)->GetIntegerValue();
 
-	DiceRange Dice(iFaces, iCount, iBonus);
-	return pCC->CreateInteger(Dice.Roll());
+			DiceRange Dice(iFaces, iCount, iBonus);
+			return pCC->CreateInteger(Dice.Roll());
+			}
+
+		default:
+			ASSERT(false);
+			return pCC->CreateNil();
+		}
 	}
 
 ICCItem *fnShipClass (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
@@ -9136,12 +9098,7 @@ ICCItem *fnShipClass (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			break;
 
 		case FN_SHIP_GET_GLOBAL_DATA:
-			{
-			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
-			CString sData = pClass->GetGlobalData(sAttrib);
-			pResult = pCC->Link(sData, 0, NULL);
-			break;
-			}
+			return pClass->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_SHIP_GET_IMAGE_DESC:
 			{
@@ -9173,9 +9130,7 @@ ICCItem *fnShipClass (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 		case FN_SHIP_SET_GLOBAL_DATA:
 			{
 			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-
-			pClass->SetGlobalData(sAttrib, sData);
+			pClass->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			pResult = pCC->CreateTrue();
 			break;
 			}
@@ -9920,6 +9875,28 @@ ICCItem *fnShipSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			return pCC->CreateTrue();
 			}
 
+		case FN_SHIP_RECHARGE_SHIELD:
+			{
+			CInstalledDevice *pShield = pShip->GetNamedDevice(devShields);
+			if (pShield == NULL)
+				return pCC->CreateNil();
+
+			CItemCtx ItemCtx(pShip, pShield);
+
+			//	If no second argument then we always recharge to full
+
+			int iHPToRecharge;
+			if (pArgs->GetCount() < 2)
+				pShield->GetHitPoints(ItemCtx, &iHPToRecharge);
+			else
+				iHPToRecharge = pArgs->GetElement(1)->GetIntegerValue();
+
+			//	Recharge and return new HPs
+
+			pShield->Recharge(pShip, iHPToRecharge);
+			return pCC->CreateInteger(pShield->GetHitPoints(ItemCtx));
+			}
+
 		case FN_SHIP_REPAIR_ITEM:
 			{
 			CItemListManipulator *pItemList = NULL;
@@ -10412,22 +10389,6 @@ ICCItem *fnShipSetOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData
 				{
 				pShip->EnhanceItem(*pItemList, etBinaryEnhancement);
 				pArgs->Discard(pCC);
-				pResult = pCC->CreateTrue();
-				}
-			break;
-			}
-
-		case FN_SHIP_RECHARGE_SHIELD:
-			{
-			int iHP = pArgs->GetElement(1)->GetIntegerValue();
-			pArgs->Discard(pCC);
-
-			CInstalledDevice *pShield = pShip->GetNamedDevice(devShields);
-			if (pShield == NULL)
-				pResult = pCC->CreateNil();
-			else
-				{
-				pShield->Recharge(pShip, iHP);
 				pResult = pCC->CreateTrue();
 				}
 			break;
@@ -10933,19 +10894,12 @@ ICCItem *fnStationType (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			}
 
 		case FN_STATION_GET_GLOBAL_DATA:
-			{
-			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
-			CString sData = pType->GetGlobalData(sAttrib);
-			pResult = pCC->Link(sData, 0, NULL);
-			break;
-			}
+			return pType->GetGlobalData(pArgs->GetElement(1)->GetStringValue())->Reference();
 
 		case FN_STATION_SET_GLOBAL_DATA:
 			{
 			CString sAttrib = pArgs->GetElement(1)->GetStringValue();
-			CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(2));
-
-			pType->SetGlobalData(sAttrib, sData);
+			pType->SetGlobalData(sAttrib, pArgs->GetElement(2));
 			pResult = pCC->CreateTrue();
 			break;
 			}
@@ -12767,9 +12721,7 @@ ICCItem *fnSystemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 			//	Increment
 
-			ICCItem *pResult;
-			pNode->IncData(sAttrib, pInc, &pResult);
-			return pResult;
+			return pNode->IncData(sAttrib, pInc)->Reference();
 			}
 
 		case FN_SYS_GET_DATA:
@@ -12806,11 +12758,10 @@ ICCItem *fnSystemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Do it
 
 			if (dwData == FN_SYS_GET_DATA)
-				return pCC->Link(pNode->GetData(sAttrib), 0, NULL);
+				return pNode->GetData(sAttrib)->Reference();
 			else
 				{
-				CString sData = CreateDataFromItem(*pCC, pArgs->GetElement(iArg));
-				pNode->SetData(sAttrib, sData);
+				pNode->SetData(sAttrib, pArgs->GetElement(iArg));
 				return pCC->CreateTrue();
 				}
 			}

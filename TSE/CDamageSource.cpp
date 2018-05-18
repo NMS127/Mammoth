@@ -64,6 +64,13 @@ bool CDamageSource::CanHitFriends (void) const
 //	Returns TRUE if we know that the source can hit friend.
 
 	{
+	//	Automated weapons never hit friends
+
+	if (IsAutomatedWeapon())
+		return false;
+
+	//	See if our source can hit friends.
+
 	CSpaceObject *pObj = GetObj();
 	return (pObj ? pObj->CanHitFriends() : false);
 	}
@@ -362,6 +369,23 @@ bool CDamageSource::IsEqual (CSpaceObject *pSrc) const
 
 		return (dwID != OBJID_NULL && pSrc && dwID == pSrc->GetID());
 		}
+	}
+
+bool CDamageSource::IsFriend (CSovereign *pSovereign) const
+
+//	IsFriend
+//
+//	Returns TRUE if we consider pSovereign a friend.
+
+	{
+	if (pSovereign == NULL)
+		return false;
+
+	CSovereign *pOurSovereign = GetSovereign();
+	if (pOurSovereign == NULL)
+		return false;
+
+	return pOurSovereign->IsFriend(pSovereign);
 	}
 
 void CDamageSource::OnLeaveSystem (void)

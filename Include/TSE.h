@@ -476,7 +476,7 @@ class COverlay
 		void FireOnObjDestroyed (CSpaceObject *pSource, const SDestroyCtx &Ctx) const;
 		void FireOnObjDocked (CSpaceObject *pSource, CSpaceObject *pShip) const;
 		inline int GetCounter (void) const { return m_iCounter; }
-		inline const CString &GetData (const CString &sAttrib) { return m_Data.GetData(sAttrib); }
+		inline ICCItemPtr GetData (const CString &sAttrib) { return m_Data.GetDataAsItem(sAttrib); }
 		inline int GetDevice (void) const { return m_iDevice; }
 		inline Metric GetDrag (CSpaceObject *pSource) const { return m_pType->GetDrag(); }
 		inline DWORD GetID (void) const { return m_dwID; }
@@ -486,7 +486,7 @@ class COverlay
 		ICCItem *GetProperty (CCodeChainCtx *pCCCtx, CSpaceObject *pSource, const CString &sName);
 		inline int GetRotation (void) const { return m_iRotation; }
 		inline COverlayType *GetType(void) const { return m_pType; }
-        inline void IncData (const CString &sAttrib, ICCItem *pValue = NULL, ICCItem **retpNewValue = NULL) { m_Data.IncData(sAttrib, pValue, retpNewValue); }
+        inline ICCItemPtr IncData (const CString &sAttrib, ICCItem *pValue = NULL) { return m_Data.IncData(sAttrib, pValue); }
 		inline bool IsDestroyed (void) const { return (m_fDestroyed ? true : false); }
 		inline bool IsFading (void) const { return (m_fFading ? true : false); }
 		inline bool IsShieldOverlay (void) const { return m_pType->IsShieldOverlay(); }
@@ -498,7 +498,7 @@ class COverlay
 		void PaintMapAnnotations (CMapViewportCtx &Ctx, CG32bitImage &Dest, int x, int y);
 		inline bool Paralyzes (CSpaceObject *pSource) const { return m_pType->Paralyzes(); }
 		void ReadFromStream (SLoadCtx &Ctx);
-		inline void SetData (const CString &sAttrib, const CString &sData) { m_Data.SetData(sAttrib, sData); }
+		inline void SetData (const CString &sAttrib, ICCItem *pData) { m_Data.SetData(sAttrib, pData); }
 		inline void SetDevice (int iDev) { m_iDevice = iDev; }
 		bool SetEffectProperty (const CString &sProperty, ICCItem *pValue);
 		inline void SetNext (COverlay *pNext) { m_pNext = pNext; }
@@ -580,7 +580,7 @@ class COverlayList
 		void FireOnObjDestroyed (CSpaceObject *pSource, const SDestroyCtx &Ctx) const;
 		void FireOnObjDocked (CSpaceObject *pSource, CSpaceObject *pShip) const;
 		int GetCountOfType (COverlayType *pType);
-		const CString &GetData (DWORD dwID, const CString &sAttrib);
+		ICCItemPtr GetData (DWORD dwID, const CString &sAttrib) const;
 		void GetImpact (CSpaceObject *pSource, SImpactDesc *retImpact) const;
 		void GetList (TArray<COverlay *> *retList);
 		void GetListOfCommandPaneCounters (TArray<COverlay *> *retList);
@@ -590,7 +590,7 @@ class COverlayList
 		int GetRotation (DWORD dwID);
 		COverlayType *GetType(DWORD dwID);
 		int GetWeaponBonus (CInstalledDevice *pDevice, CSpaceObject *pSource);
-        void IncData (DWORD dwID, const CString &sAttrib, ICCItem *pValue = NULL, ICCItem **retpNewValue = NULL);
+        ICCItemPtr IncData (DWORD dwID, const CString &sAttrib, ICCItem *pValue = NULL);
 		inline bool IsEmpty (void) { return (m_pFirst == NULL); }
 		void Paint (CG32bitImage &Dest, int iScale, int x, int y, SViewportPaintCtx &Ctx);
 		void PaintAnnotations (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx);
@@ -600,7 +600,7 @@ class COverlayList
 		void ReadFromStream (SLoadCtx &Ctx, CSpaceObject *pSource);
 		void RemoveField (CSpaceObject *pSource, DWORD dwID);
 		void ScrapeHarmfulOverlays (CSpaceObject *pSource, int iMaxRemoved = 1);
-		void SetData (DWORD dwID, const CString &sAttrib, const CString &sData);
+		void SetData (DWORD dwID, const CString &sAttrib, ICCItem *pData);
 		bool SetEffectProperty (DWORD dwID, const CString &sProperty, ICCItem *pValue);
 		void SetPos (CSpaceObject *pSource, DWORD dwID, const CVector &vPos);
 		bool SetProperty (CSpaceObject *pSource, DWORD dwID, const CString &sName, ICCItem *pValue);
@@ -839,8 +839,8 @@ class CSpaceObject : public CObject
 
 		//	Data
 
-		const CString &GetGlobalData (const CString &sAttribute) const;
-		void SetGlobalData (const CString &sAttribute, const CString &sData);
+		ICCItemPtr GetGlobalData (const CString &sAttribute) const;
+		void SetGlobalData (const CString &sAttribute, ICCItem *pData);
 
 		//	Devices
 
@@ -1031,7 +1031,7 @@ class CSpaceObject : public CObject
 		inline Metric GetBoundsRadius (void) const { return Max(m_rBoundsX, m_rBoundsY); }
 		CCommunicationsHandler *GetCommsHandler (void);
 		int GetCommsMessageCount (void);
-		inline const CString &GetData (const CString &sAttrib) const { return m_Data.GetData(sAttrib); }
+		inline ICCItemPtr GetData (const CString &sAttrib) const { return m_Data.GetDataAsItem(sAttrib); }
 		inline CString GetDataField (const CString &sField) { CString sValue; FindDataField(sField, &sValue); return sValue; }
 		int GetDataInteger (const CString &sAttrib) const;
 		CString GetDesiredCommsKey (void) const;
@@ -1069,7 +1069,7 @@ class CSpaceObject : public CObject
 		inline const CVector &GetPos (void) const { return m_vPos; }
 		inline bool GetPOVLRS (void) { return m_fInPOVLRS; }
 		CSovereign *GetSovereignToDefend (void) const;
-		const CString &GetStaticData (const CString &sAttrib);
+		ICCItemPtr GetStaticData (const CString &sAttrib);
 		CG32bitPixel GetSymbolColor (void);
 		void GetVisibleEnemies (DWORD dwFlags, TArray<CSpaceObject *> *retList, CSpaceObject *pExcludeObj = NULL);
 		CSpaceObject *GetVisibleEnemyInRange (CSpaceObject *pCenter, Metric rMaxRange = g_InfiniteDistance, bool bIncludeStations = false, CSpaceObject *pExcludeObj = NULL);
@@ -1107,12 +1107,11 @@ class CSpaceObject : public CObject
 					&& (vUR.GetY() > m_vPos.GetY())
 					&& (vLL.GetX() < m_vPos.GetX())
 					&& (vLL.GetY() < m_vPos.GetY()); }
-		inline void IncData (const CString &sAttrib, ICCItem *pValue = NULL, ICCItem **retpNewValue = NULL) { m_Data.IncData(sAttrib, pValue, retpNewValue); }
+		inline ICCItemPtr IncData (const CString &sAttrib, ICCItem *pValue = NULL) { return m_Data.IncData(sAttrib, pValue); }
 		bool InteractsWith (int iInteraction) const;
 		bool IsAutoClearDestination (void) { return m_fAutoClearDestination; }
 		bool IsAutoClearDestinationOnDestroy (void) { return m_fAutoClearDestinationOnDestroy; }
 		bool IsAutoClearDestinationOnDock (void) { return m_fAutoClearDestinationOnDock; }
-		bool IsAutomatedWeapon (void) const { return (m_fAutomatedWeapon ? true : false); }
 		bool IsBarrier (void) const { return (m_fIsBarrier ? true : false); }
 		inline bool IsCollisionTestNeeded (void) { return m_fCollisionTestNeeded; }
 		bool IsCommsMessageValidFrom (CSpaceObject *pSender, int iIndex, CString *retsMsg = NULL, CString *retsKey = NULL);
@@ -1170,9 +1169,8 @@ class CSpaceObject : public CObject
 		inline void SetAutoClearDestination (void) { m_fAutoClearDestination = true; }
 		inline void SetAutoClearDestinationOnDestroy (void) { m_fAutoClearDestinationOnDestroy = true; }
 		inline void SetAutoClearDestinationOnDock (void) { m_fAutoClearDestinationOnDock = true; }
-		inline void SetAutomatedWeapon (void) { m_fAutomatedWeapon = true; }
 		inline void SetCollisionTestNeeded (bool bNeeded = true) { m_fCollisionTestNeeded = bNeeded; }
-		inline void SetData (const CString &sAttrib, const CString &sData) { m_Data.SetData(sAttrib, sData); }
+		inline void SetData (const CString &sAttrib, ICCItem *pData) { m_Data.SetData(sAttrib, pData); }
 		inline void SetDataFromDataBlock (const CAttributeDataBlock &Block) { m_Data.MergeFrom(Block); }
 		inline void SetDataFromXML (CXMLElement *pData) { m_Data.SetFromXML(pData); }
 		void SetDataInteger (const CString &sAttrib, int iValue);
@@ -1269,7 +1267,7 @@ class CSpaceObject : public CObject
 		void AddOverlay (COverlayType *pType, const CVector &vPos, int iRotation, int iLifetime, DWORD *retdwID = NULL);
 		void CalcOverlayPos (COverlayType *pOverlayType, const CVector &vPos, int *retiPosAngle, int *retiPosRadius);
 		inline COverlay *GetOverlay (DWORD dwID) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->GetOverlay(dwID) : NULL); }
-		inline const CString &GetOverlayData (DWORD dwID, const CString &sAttrib) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->GetData(dwID, sAttrib) : NULL_STR); }
+		ICCItemPtr GetOverlayData (DWORD dwID, const CString &sAttrib) const;
 		inline void GetOverlayImpact (COverlayList::SImpactDesc *retImpact) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->GetImpact(this, retImpact); else *retImpact = COverlayList::SImpactDesc(); }
 		inline void GetOverlayList (TArray<COverlay *> *retList) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->GetList(retList); else retList->DeleteAll(); }
 		inline void GetOverlayListOfCommandPaneCounters (TArray<COverlay *> *retList) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->GetListOfCommandPaneCounters(retList); else retList->DeleteAll(); }
@@ -1277,7 +1275,7 @@ class CSpaceObject : public CObject
 		ICCItem *GetOverlayProperty (CCodeChainCtx *pCCCtx, DWORD dwID, const CString &sName);
 		inline int GetOverlayRotation (DWORD dwID) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->GetRotation(dwID) : -1); }
 		inline COverlayType *GetOverlayType (DWORD dwID) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->GetType(dwID) : NULL); }
-		inline void SetOverlayData (DWORD dwID, const CString &sAttribute, const CString &sData) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->SetData(dwID, sAttribute, sData); }
+		inline void SetOverlayData (DWORD dwID, const CString &sAttribute, ICCItem *pData) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->SetData(dwID, sAttribute, pData); }
 		inline bool SetOverlayEffectProperty (DWORD dwID, const CString &sProperty, ICCItem *pValue) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->SetEffectProperty(dwID, sProperty, pValue) : false); }
 		inline void SetOverlayPos (DWORD dwID, const CVector &vPos) { COverlayList *pOverlays = GetOverlays(); if (pOverlays) pOverlays->SetPos(this, dwID, vPos); }
 		inline bool SetOverlayProperty (DWORD dwID, const CString &sName, ICCItem *pValue, CString *retsError) { COverlayList *pOverlays = GetOverlays(); return (pOverlays ? pOverlays->SetProperty(this, dwID, sName, pValue) : false); }
@@ -1443,6 +1441,7 @@ class CSpaceObject : public CObject
 		virtual int GetAISettingInteger (const CString &sSetting) { return 0; }
 		virtual CString GetAISettingString (const CString &sSetting) { return NULL_STR; }
 		virtual CArmorSystem *GetArmorSystem (void) { return NULL; }
+		virtual CurrencyValue GetBalancedTreasure (void) const { return 0; }
 		virtual Metric GetCargoSpaceLeft (void) { return 1000000.0; }
 		virtual int GetCombatPower (void) { return 0; }
 		virtual int GetCyberDefenseLevel (void) { return GetLevel(); }
@@ -1700,14 +1699,13 @@ class CSpaceObject : public CObject
 
 		DWORD m_fTimeStop:1;					//	TRUE if time has stopped for this object
 		DWORD m_fPlayerTarget:1;				//	TRUE if this is a target for the player
-		DWORD m_fAutomatedWeapon:1;				//	TRUE if this is a shot from automated weapon
 		DWORD m_fHasOnObjDockedEvent:1;			//	TRUE if this object has an OnObjDocked event
 		DWORD m_fOnCreateCalled:1;				//	TURE if OnCreate event has already been called
 		DWORD m_fNoFriendlyTarget:1;			//	TRUE if object cannot be hit by friends
 		DWORD m_fItemEventsValid:1;				//	TRUE if item event dispatcher is up to date
 		DWORD m_fHasOnDamageEvent:1;			//	TRUE if object has OnDamage event
-
 		DWORD m_fHasOnAttackedEvent:1;			//	TRUE if object has OnAttacked event
+
 		DWORD m_fInDamage:1;					//	TRUE if object is inside Damage call
 		DWORD m_fDestroyed:1;					//	TRUE if object is destroyed (but not yet deleted)
 		DWORD m_fPlayerDestination:1;			//	TRUE if object is a destination for the player
@@ -1715,8 +1713,8 @@ class CSpaceObject : public CObject
 		DWORD m_fHasInterSystemEvent:1;			//	TRUE if object has OnPlayerEnteredSystem or OnPlayerLeftSystem event
 		DWORD m_fAutoClearDestination:1;		//	TRUE if m_fPlayerDestination is cleared when object in SRS
 		DWORD m_fHasOnOrdersCompletedEvent:1;	//	TRUE if object has OnOrdersCompleted event
-
 		DWORD m_fPlayerDocked:1;				//	TRUE if player is docked with this object
+
 		DWORD m_fPaintNeeded:1;					//	TRUE if object needs to be painted
 		DWORD m_fNonLinearMove:1;				//	TRUE if object updates its position inside OnMove
 		DWORD m_fHasName:1;						//	TRUE if object has been named (this is an optimization--it may have false positives)
@@ -1724,8 +1722,8 @@ class CSpaceObject : public CObject
 		DWORD m_fAscended:1;					//	TRUE if object is ascended (i.e., stored outside a system)
 		DWORD m_fOutOfPlaneObj:1;				//	TRUE if object is out of plane
 		DWORD m_fPainted:1;						//	TRUE if we painted the object last tick
-
 		DWORD m_fAutoClearDestinationOnDock:1;	//	TRUE if we should clear the destination when player docks
+
 		DWORD m_fShowHighlight:1;				//	TRUE if we should paint a target highlight in SRS
 		DWORD m_fAutoClearDestinationOnDestroy:1;//	TRUE if we should clear the destination when station is destroyed
 		DWORD m_fShowDamageBar:1;				//	TRUE if we should show damage bar
@@ -1733,12 +1731,13 @@ class CSpaceObject : public CObject
 		DWORD m_fInsideBarrier:1;				//	TRUE if we got created inside a barrier
 		DWORD m_fHasOnSubordinateAttackedEvent:1;	//	TRUE if we have a <OnSubordinateAttacked> event
 		DWORD m_fHasGetDockScreenEvent:1;		//	TRUE if we have a <GetDockScreen> event
-
 		DWORD m_fHasOnAttackedByPlayerEvent:1;	//	TRUE if we have an <OnAttackedByPlayer> event
+
 		DWORD m_fHasOnOrderChangedEvent:1;		//	TRUE if we have an <OnOrderChanged> event
 		DWORD m_fManualAnchor:1;				//	TRUE if object is temporarily anchored
 		DWORD m_fCollisionTestNeeded:1;			//	TRUE if object needs to check collisions with barriers
 		DWORD m_fHasDockScreenMaybe:1;			//	TRUE if object has a dock screen for player (may be stale)
+		DWORD m_fSpare5:1;
 		DWORD m_fSpare6:1;
 		DWORD m_fSpare7:1;
 		DWORD m_fSpare8:1;
