@@ -8,6 +8,18 @@
 #define DEVICE_ID_ATTRIB						CONSTLIT("deviceID")
 #define ITEM_ATTRIB								CONSTLIT("item")
 
+#define PROPERTY_CAPACITOR      				CONSTLIT("capacitor")
+#define PROPERTY_ENABLED						CONSTLIT("enabled")
+#define PROPERTY_EXTERNAL						CONSTLIT("external")
+#define PROPERTY_EXTRA_POWER_USE				CONSTLIT("extraPowerUse")
+#define PROPERTY_FIRE_ARC						CONSTLIT("fireArc")
+#define PROPERTY_HP								CONSTLIT("hp")
+#define PROPERTY_LINKED_FIRE_OPTIONS			CONSTLIT("linkedFireOptions")
+#define PROPERTY_OMNIDIRECTIONAL				CONSTLIT("omnidirectional")
+#define PROPERTY_POS							CONSTLIT("pos")
+#define PROPERTY_SECONDARY						CONSTLIT("secondary")
+#define PROPERTY_TEMPERATURE      				CONSTLIT("temperature")
+
 //	CInstalledDevice class
 
 CInstalledDevice::CInstalledDevice (void) : 
@@ -25,7 +37,7 @@ CInstalledDevice::CInstalledDevice (void) :
 		m_iFireAngle(0),
 		m_iTemperature(0),
 		m_iActivateDelay(0),
-		m_iSlotBonus(0),
+		m_iExtraPowerUse(0),
 		m_iSlotPosIndex(-1),
 
 		m_fOmniDirectional(false),
@@ -60,14 +72,6 @@ bool CInstalledDevice::AccumulateSlotEnhancements (CSpaceObject *pSource, TArray
 	if (!m_SlotEnhancements.IsEmpty())
 		bEnhanced = m_SlotEnhancements.Accumulate(CItemCtx(pSource, const_cast<CInstalledDevice *>(this)), *GetItem(), EnhancementIDs, pEnhancements);
 
-	//	Add slot bonus
-
-	if (m_iSlotBonus != 0)
-		{
-		pEnhancements->InsertHPBonus(m_iSlotBonus);
-		bEnhanced = true;
-		}
-
 	return bEnhanced;
 	}
 
@@ -75,13 +79,24 @@ int CInstalledDevice::CalcPowerUsed (SUpdateCtx &Ctx, CSpaceObject *pSource)
 
 //	CalcPowerUsed
 //
-//	Calculates how much power this device used this turn
+//	Calculates how much power this device used this tick. Positive numbers are
+//	consumption; negative numbers are power generation.
 
 	{
-	if (!IsEmpty()) 
-		return m_pClass->CalcPowerUsed(Ctx, this, pSource);
-	else
+	if (IsEmpty()) 
 		return 0;
+
+	//	Let the device compute power used. 
+
+	int iPower = m_pClass->CalcPowerUsed(Ctx, this, pSource);
+
+	//	Add extra power used
+
+	iPower += m_iExtraPowerUse;
+
+	//	Done
+
+	return iPower;
 	}
 
 void CInstalledDevice::FinishInstall (CSpaceObject *pSource)
@@ -319,7 +334,9 @@ void CInstalledDevice::InitFromDesc (const SDeviceDesc &Desc)
 	m_fSecondaryWeapon = Desc.bSecondary;
 
 	m_SlotEnhancements = Desc.Enhancements;
-	m_iSlotBonus = Desc.iSlotBonus;
+	if (Desc.iSlotBonus != 0)
+		m_SlotEnhancements.InsertHPBonus(Desc.iSlotBonus);
+
 	m_iSlotPosIndex = -1;
 	}
 
@@ -364,6 +381,7 @@ void CInstalledDevice::Install (CSpaceObject *pObj, CItemListManipulator &ItemLi
 	m_iSlotPosIndex = -1;
 	m_pOverlay = NULL;
 	m_dwData = 0;
+	m_iExtraPowerUse = 0;
 	m_iTemperature = 0;
 	m_fWaiting = false;
 	m_fEnabled = true;
@@ -431,7 +449,8 @@ void CInstalledDevice::Install (CSpaceObject *pObj, CItemListManipulator &ItemLi
 		m_fSecondaryWeapon = Desc.bSecondary;
 
 		m_SlotEnhancements = Desc.Enhancements;
-		m_iSlotBonus = Desc.iSlotBonus;
+		if (Desc.iSlotBonus != 0)
+			m_SlotEnhancements.InsertHPBonus(Desc.iSlotBonus);
 		}
 
 	//	Event (when creating a ship we wait until the
@@ -655,8 +674,18 @@ void CInstalledDevice::ReadFromStream (CSpaceObject *pSource, SLoadCtx &Ctx)
 	else
 		m_iSlotPosIndex = (int)LOWORD(dwLoad);
 
+	//	In version 159, we replace slot bonus with extra power variable
+
+	int iSlotBonus = 0;
 	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
-	m_iSlotBonus = (int)LOWORD(dwLoad);
+
+	if (Ctx.dwVersion >= 159)
+		m_iExtraPowerUse = (int)LOWORD(dwLoad);
+	else
+		{
+		m_iExtraPowerUse = 0;
+		iSlotBonus = (int)LOWORD(dwLoad);
+		}
 
 	if (Ctx.dwVersion >= 29)
 		m_iDeviceSlot = (int)HIWORD(dwLoad);
@@ -751,6 +780,9 @@ void CInstalledDevice::ReadFromStream (CSpaceObject *pSource, SLoadCtx &Ctx)
 
 	if (bSlotEnhancements)
 		m_SlotEnhancements.ReadFromStream(Ctx);
+
+	if (iSlotBonus != 0)
+		m_SlotEnhancements.InsertHPBonus(iSlotBonus);
 	}
 
 int CInstalledDevice::IncCharges (CSpaceObject *pSource, int iChange)
@@ -917,6 +949,180 @@ void CInstalledDevice::SetLinkedFireOptions (DWORD dwOptions)
 		m_fLinkedFireEnemy = true;
 	}
 
+bool CInstalledDevice::SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, CString *retsError)
+
+//	SetProperty
+//
+//	Sets a property for an installed device. Returns FALSE if we could not set
+//	the property for some reason.
+
+	{
+	CCodeChain &CC = g_pUniverse->GetCC();
+	if (IsEmpty())
+		{
+		if (retsError) *retsError = CONSTLIT("No device installed.");
+		return false;
+		}
+
+	//	Figure out what to set
+
+    if (strEquals(sName, PROPERTY_CAPACITOR))
+        {
+        CSpaceObject *pSource = Ctx.GetSource();
+        if (!m_pClass->SetCounter(this, pSource, CDeviceClass::cntCapacitor, pValue->GetIntegerValue()))
+            {
+            if (retsError) *retsError = CONSTLIT("Unable to set capacitor value.");
+            return false;
+            }
+        }
+	else if (strEquals(sName, PROPERTY_EXTERNAL))
+		{
+		bool bSetExternal = (pValue && !pValue->IsNil());
+		if (IsExternal() != bSetExternal)
+			{
+			//	If the class is external and we don't want it to be external, then
+			//	we cannot comply.
+
+			if (m_pClass->IsExternal() && !bSetExternal)
+				{
+				if (retsError) *retsError = CONSTLIT("Device is natively external and cannot be made internal.");
+				return false;
+				}
+
+			SetExternal(bSetExternal);
+			}
+		}
+
+	else if (strEquals(sName, PROPERTY_EXTRA_POWER_USE))
+		{
+		m_iExtraPowerUse = pValue->GetIntegerValue();
+		}
+
+	else if (strEquals(sName, PROPERTY_FIRE_ARC))
+		{
+		//	A value of nil means no fire arc (and no omni)
+
+		if (pValue == NULL || pValue->IsNil())
+			{
+			SetOmniDirectional(false);
+			SetFireArc(0, 0);
+			}
+
+		//	A value of "omnidirectional" counts
+
+		else if (strEquals(pValue->GetStringValue(), PROPERTY_OMNIDIRECTIONAL))
+			{
+			SetOmniDirectional(true);
+			SetFireArc(0, 0);
+			}
+
+		//	A single value means that we just point in a direction
+
+		else if (pValue->GetCount() == 1)
+			{
+			int iMinFireArc = AngleMod(pValue->GetElement(0)->GetIntegerValue());
+			SetOmniDirectional(false);
+			SetFireArc(iMinFireArc, iMinFireArc);
+			}
+
+		//	Otherwise we expect a list with two elements
+
+		else if (pValue->GetCount() >= 2)
+			{
+			int iMinFireArc = AngleMod(pValue->GetElement(0)->GetIntegerValue());
+			int iMaxFireArc = AngleMod(pValue->GetElement(1)->GetIntegerValue());
+			SetOmniDirectional(false);
+			SetFireArc(iMinFireArc, iMaxFireArc);
+			}
+
+		//	Invalid
+
+		else
+			{
+			if (retsError) *retsError = CONSTLIT("Invalid fireArc parameter.");
+			return false;
+			}
+		}
+
+	else if (strEquals(sName, PROPERTY_LINKED_FIRE_OPTIONS))
+		{
+		//	Parse the options
+
+		DWORD dwOptions;
+		if (!::GetLinkedFireOptions(pValue, &dwOptions, retsError))
+			{
+			if (retsError) *retsError = CONSTLIT("Invalid linked-fire option.");
+			return false;
+			}
+
+		//	Set
+
+		SetLinkedFireOptions(dwOptions);
+		}
+
+	else if (strEquals(sName, PROPERTY_POS))
+		{
+		//	Get the parameters. We accept a single list parameter with angle/radius/z.
+		//	(The latter is compatible with the return of objGetDevicePos.)
+
+		int iPosAngle;
+		int iPosRadius;
+		int iZ;
+		if (pValue == NULL || pValue->IsNil())
+			{
+			iPosAngle = 0;
+			iPosRadius = 0;
+			iZ = 0;
+			}
+		else if (pValue->GetCount() >= 2)
+			{
+			iPosAngle = pValue->GetElement(0)->GetIntegerValue();
+			iPosRadius = pValue->GetElement(1)->GetIntegerValue();
+
+			if (pValue->GetCount() >= 3)
+				iZ = pValue->GetElement(2)->GetIntegerValue();
+			else
+				iZ = 0;
+			}
+		else
+			{
+			if (retsError) *retsError = CONSTLIT("Invalid angle and radius");
+			return false;
+			}
+
+		//	Set it
+
+		SetPosAngle(iPosAngle);
+		SetPosRadius(iPosRadius);
+		SetPosZ(iZ);
+		}
+
+	else if (strEquals(sName, PROPERTY_SECONDARY))
+		{
+		if (pValue == NULL || !pValue->IsNil())
+			SetSecondary(true);
+		else
+			SetSecondary(false);
+		}
+
+    else if (strEquals(sName, PROPERTY_TEMPERATURE))
+        {
+        CSpaceObject *pSource = Ctx.GetSource();
+        if (!m_pClass->SetCounter(this, pSource, CDeviceClass::cntTemperature, pValue->GetIntegerValue()))
+            {
+            if (retsError) *retsError = CONSTLIT("Unable to set temperature value.");
+            return false;
+            }
+        }
+
+	//	Otherwise, let any sub-classes handle it.
+
+	else
+		return m_pClass->SetItemProperty(Ctx, sName, pValue, retsError);
+
+	return true;
+	}
+
 void CInstalledDevice::Uninstall (CSpaceObject *pObj, CItemListManipulator &ItemList)
 
 //	Uninstall
@@ -1075,7 +1281,7 @@ void CInstalledDevice::WriteToStream (IWriteStream *pStream)
 	dwSave = MAKELONG(m_iSlotPosIndex, m_iTemperature);
 	pStream->Write((char *)&dwSave, sizeof(DWORD));
 
-	dwSave = MAKELONG(m_iSlotBonus, m_iDeviceSlot);
+	dwSave = MAKELONG(m_iExtraPowerUse, m_iDeviceSlot);
 	pStream->Write((char *)&dwSave, sizeof(DWORD));
 
 	dwSave = MAKELONG(m_iActivateDelay, m_iPosZ);

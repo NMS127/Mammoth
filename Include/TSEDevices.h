@@ -95,6 +95,7 @@ class CEnhancementDesc
 	public:
 		bool Accumulate (CItemCtx &Ctx, const CItem &Target, TArray<CString> &EnhancementIDs, CItemEnhancementStack *pEnhancements) const;
 		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc);
+		void InsertHPBonus (int iBonus);
 		inline bool IsEmpty (void) const { return (m_Enhancements.GetCount() == 0); }
 		inline int GetCount (void) const { return m_Enhancements.GetCount(); }
 		inline const CItemEnhancement &GetEnhancement (int iIndex) const { return m_Enhancements[iIndex].Enhancement; }
@@ -198,8 +199,16 @@ class CDeviceClass
 		ALERROR Bind (SDesignLoadCtx &Ctx);
         inline ALERROR FinishBind (SDesignLoadCtx &Ctx) { return OnFinishBind(Ctx); }
 		inline CEffectCreator *FindEffectCreator (const CString &sUNID) { return OnFindEffectCreator(sUNID); }
-		inline bool FindEventHandlerDeviceClass (ECachedHandlers iEvent, SEventHandlerDesc *retEvent = NULL) const { if (retEvent) *retEvent = m_CachedEvents[iEvent]; return (m_CachedEvents[iEvent].pCode != NULL); }
-		COverlayType *FireGetOverlayType(CItemCtx &Ctx) const;
+		inline bool FindEventHandlerDeviceClass (ECachedHandlers iEvent, SEventHandlerDesc *retEvent = NULL) const 
+			{ 
+			if (m_CachedEvents[iEvent].pCode == NULL)
+				return false;
+
+			if (retEvent) *retEvent = m_CachedEvents[iEvent];
+			return true;
+			}
+
+		COverlayType *FireGetOverlayType (CItemCtx &Ctx) const;
         bool GetAmmoItemPropertyBool (CItemCtx &Ctx, const CItem &Ammo, const CString &sProperty);
         Metric GetAmmoItemPropertyDouble (CItemCtx &Ctx, const CItem &Ammo, const CString &sProperty);
 		inline ItemCategories GetCategory (void) const { return (m_iSlotCategory == itemcatNone ? GetImplCategory() : m_iSlotCategory); }
@@ -446,6 +455,7 @@ class CInstalledDevice
 		inline DWORD GetData (void) const { return m_dwData; }
 		inline int GetDeviceSlot (void) const { return m_iDeviceSlot; }
 		inline TSharedPtr<CItemEnhancementStack> GetEnhancementStack (void) const { return m_pEnhancements; }
+		inline int GetExtraPowerUse (void) const { return m_iExtraPowerUse; }
 		ItemFates GetFate (void) const;
 		inline int GetFireArc (void) const { return (IsOmniDirectional() ? 360 : AngleRange(m_iMinFireArc, m_iMaxFireArc)); }
 		inline int GetFireAngle (void) const { return m_iFireAngle; }
@@ -461,7 +471,6 @@ class CInstalledDevice
 		inline int GetPosRadius (void) const { return m_iPosRadius; }
 		inline int GetPosZ (void) const { return m_iPosZ; }
 		inline int GetRotation (void) const { return AngleMiddle(m_iMinFireArc, m_iMaxFireArc); }
-		inline int GetSlotBonus (void) const { return m_iSlotBonus; }
 		inline const CEnhancementDesc &GetSlotEnhancements (void) const { return m_SlotEnhancements; }
 		inline int GetSlotPosIndex (void) const { return m_iSlotPosIndex; }
 		inline int GetTemperature (void) const { return m_iTemperature; }
@@ -501,9 +510,9 @@ class CInstalledDevice
 		inline void SetPosAngle (int iAngle) { m_iPosAngle = iAngle; }
 		inline void SetPosRadius (int iRadius) { m_iPosRadius = iRadius; }
 		inline void SetPosZ (int iZ) { m_iPosZ = iZ; m_f3DPosition = (iZ != 0); }
+		bool SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, CString *retsError);
 		inline void SetRegenerating (bool bRegenerating) { m_fRegenerating = bRegenerating; }
 		inline void SetSecondary (bool bSecondary = true) { m_fSecondaryWeapon = bSecondary; }
-		inline void SetSlotBonus (int iBonus) { m_iSlotBonus = iBonus; }
 		inline void SetSlotPosIndex (int iIndex) { m_iSlotPosIndex = iIndex; }
 		inline void SetTemperature (int iTemperature) { m_iTemperature = iTemperature; }
 		inline void SetTimeUntilReady (int iDelay) { m_iTimeUntilReady = iDelay; }
@@ -615,7 +624,7 @@ class CInstalledDevice
 
 		int m_iTemperature:16;					//	Temperature for weapons
 		int m_iActivateDelay:16;				//	Cached activation delay
-		int m_iSlotBonus:16;					//	Bonus from device slot itself
+		int m_iExtraPowerUse:16;				//	Additional power use per tick
 		int m_iSlotPosIndex:16;					//	Slot placement
 
 		DWORD m_fOmniDirectional:1;				//	Installed on turret

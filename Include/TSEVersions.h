@@ -7,7 +7,7 @@
 
 constexpr DWORD API_VERSION =							40;
 constexpr DWORD UNIVERSE_SAVE_VERSION =					34;
-constexpr DWORD SYSTEM_SAVE_VERSION =					158;
+constexpr DWORD SYSTEM_SAVE_VERSION =					159;
 
 //	Uncomment out the following define when building a stable release
 
@@ -586,3 +586,6 @@ constexpr DWORD SYSTEM_SAVE_VERSION =					158;
 //
 //	158: 1.8 Beta 2
 //		Removed m_fAutomatedWeapon from CSpaceObject
+//
+//	159: 1.8 Beta 2
+//		Added m_iExtraPowerUse to replace m_iSlotBonus in CInstalledDevice
