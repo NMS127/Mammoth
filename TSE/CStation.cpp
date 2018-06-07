@@ -278,7 +278,7 @@ void CStation::CalcBounds (void)
 	SetBounds(rcBounds, GetParallaxDist());
 	}
 
-void CStation::CalcImageModifiers (CCompositeImageModifiers *retModifiers, int *retiTick)
+void CStation::CalcImageModifiers (CCompositeImageModifiers *retModifiers, int *retiTick) const
 
 //	CalcImageModifier
 //
@@ -1377,7 +1377,7 @@ Metric CStation::GetGravity (Metric *retrRadius) const
 	return r1EAccel;
 	}
 
-const CObjectImageArray &CStation::GetImage (bool bFade, int *retiTick, int *retiVariant)
+const CObjectImageArray &CStation::GetImage (bool bFade, int *retiTick, int *retiVariant) const
 
 //	GetImage
 //
@@ -4080,7 +4080,7 @@ void CStation::PaintLRSForeground (CG32bitImage &Dest, int x, int y, const Viewp
 	DEBUG_CATCH_MSG1("Crash in CStation::PaintLRSForeground: type: %08x", m_pType->GetUNID());
 	}
 
-bool CStation::PointInObject (const CVector &vObjPos, const CVector &vPointPos)
+bool CStation::PointInObject (const CVector &vObjPos, const CVector &vPointPos) const
 
 //	PointInObject
 //
@@ -4106,7 +4106,7 @@ bool CStation::PointInObject (const CVector &vObjPos, const CVector &vPointPos)
 	DEBUG_CATCH
 	}
 
-bool CStation::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const CVector &vPointPos)
+bool CStation::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const CVector &vPointPos) const
 
 //	PointInObject
 //
@@ -4127,7 +4127,7 @@ bool CStation::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, co
 	DEBUG_CATCH
 	}
 
-void CStation::PointInObjectInit (SPointInObjectCtx &Ctx)
+void CStation::PointInObjectInit (SPointInObjectCtx &Ctx) const
 
 //	PointInObjectInit
 //

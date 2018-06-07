@@ -43,7 +43,7 @@ class CAutoDefenseClass : public CDeviceClass
 
 
 		TargetingSystemTypes m_iTargeting;
-		CSpaceObject::Criteria m_TargetCriteria;
+		CSpaceObjectCriteria m_TargetCriteria;
 		Metric m_rInterceptRange;
 
 		bool m_bOmnidirectional;				//	Omnidirectional
@@ -51,8 +51,6 @@ class CAutoDefenseClass : public CDeviceClass
 		int m_iMaxFireArc;						//	Max angle of fire arc (degrees)
 		int m_iRechargeTicks;
 		CDeviceClassRef m_pWeapon;
-
-
 	};
 
 class CCargoSpaceClass : public CDeviceClass
@@ -62,9 +60,6 @@ class CCargoSpaceClass : public CDeviceClass
 
 		//	CDeviceClass virtuals
 
-		virtual bool CanBeDamaged (void) override { return false; }
-		virtual bool CanBeDisabled (CItemCtx &Ctx) override { return false; }
-		virtual bool CanBeDisrupted (void) override { return false; }
 		virtual bool FindDataField (const CString &sField, CString *retsValue) override;
 		virtual const CCargoDesc *GetCargoDesc (CItemCtx &Ctx) const override { return GetDesc(Ctx); }
 		virtual ItemCategories GetImplCategory (void) const override { return itemcatCargoHold; }
@@ -72,6 +67,9 @@ class CCargoSpaceClass : public CDeviceClass
 
 	protected:
         virtual bool OnAccumulatePerformance (CItemCtx &ItemCtx, SShipPerformanceCtx &Ctx) const override;
+		virtual bool OnCanBeDamaged (void) const override { return false; }
+		virtual bool OnCanBeDisabled (CItemCtx &Ctx) const override { return false; }
+		virtual bool OnCanBeDisrupted (void) const override { return false; }
 		virtual CString OnGetReference (CItemCtx &Ctx, const CItem &Ammo = CItem(), DWORD dwFlags = 0) override;
 
 	private:
@@ -281,7 +279,6 @@ class CReactorClass : public CDeviceClass
 
 		//	CDeviceClass virtuals
 
-		virtual bool CanBeDisabled (CItemCtx &Ctx) override { return false; }
 		virtual bool FindDataField (const CString &sField, CString *retsValue) override;
 		virtual ICCItem *FindItemProperty (CItemCtx &Ctx, const CString &sName) override;
 		virtual ItemCategories GetImplCategory (void) const override { return itemcatReactor; }
@@ -291,6 +288,7 @@ class CReactorClass : public CDeviceClass
 
 	protected:
         virtual bool OnAccumulatePerformance (CItemCtx &ItemCtx, SShipPerformanceCtx &Ctx) const override;
+		virtual bool OnCanBeDisabled (CItemCtx &Ctx) const override { return false; }
 		virtual CString OnGetReference (CItemCtx &Ctx, const CItem &Ammo = CItem(), DWORD dwFlags = 0) override;
 
 	private:
@@ -524,10 +522,13 @@ class CSolarDeviceClass : public CDeviceClass
 		//	CDeviceClass virtuals
 
 		virtual int CalcPowerUsed (SUpdateCtx &Ctx, CInstalledDevice *pDevice, CSpaceObject *pSource) override;
-		virtual bool CanBeDisabled (CItemCtx &Ctx) override { return false; }
 		virtual ItemCategories GetImplCategory (void) const override { return itemcatMiscDevice; }
 		virtual void Update (CInstalledDevice *pDevice, CSpaceObject *pSource, SDeviceUpdateCtx &Ctx) override;
 		virtual void OnInstall (CInstalledDevice *pDevice, CSpaceObject *pSource, CItemListManipulator &ItemList) override;
+
+	protected:
+
+		virtual bool OnCanBeDisabled (CItemCtx &Ctx) const override { return false; }
 
 	private:
 		CSolarDeviceClass (void);

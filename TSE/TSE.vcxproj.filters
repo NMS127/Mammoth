@@ -290,6 +290,9 @@
     <ClInclude Include="TopologyDescImpl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Include\TSEObjectCriteria.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CAdventureRecord.cpp">
@@ -1227,6 +1230,12 @@
     </ClCompile>
     <ClCompile Include="CImageFilterStack.cpp">
       <Filter>Source Files\Images</Filter>
+    </ClCompile>
+    <ClCompile Include="CItemTypeProbabilityTable.cpp">
+      <Filter>Source Files\Items</Filter>
+    </ClCompile>
+    <ClCompile Include="CSpaceObjectCriteria.cpp">
+      <Filter>Source Files\SpaceObjects</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

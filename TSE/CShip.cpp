@@ -53,6 +53,8 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_AVAILABLE_WEAPON_SLOTS			CONSTLIT("availableWeaponSlots")
 #define PROPERTY_BLINDING_IMMUNE				CONSTLIT("blindingImmune")
 #define PROPERTY_CARGO_SPACE					CONSTLIT("cargoSpace")
+#define PROPERTY_CARGO_SPACE_FREE_KG			CONSTLIT("cargoSpaceFreeKg")
+#define PROPERTY_CARGO_SPACE_USED_KG			CONSTLIT("cargoSpaceUsedKg")
 #define PROPERTY_CHARACTER						CONSTLIT("character")
 #define PROPERTY_DEVICE_DAMAGE_IMMUNE			CONSTLIT("deviceDamageImmune")
 #define PROPERTY_DEVICE_DISRUPT_IMMUNE			CONSTLIT("deviceDisruptImmune")
@@ -1165,7 +1167,7 @@ bool CShip::CanInstallItem (const CItem &Item, int iSlot, InstallItemResults *re
 							&& pNewCargo->GetCargoSpace() < pOldCargo->GetCargoSpace())
 						{
 						OnComponentChanged(comCargo);
-						Metric rRequiredCargoSpace = GetCargoMass() + Item.GetMass();
+						Metric rRequiredCargoSpace = GetCargoMass() + ItemToReplace.GetMass() - Item.GetMass();
 						Metric rNewCargoSpace = (Metric)Hull.GetCargoSpace() + pNewCargo->GetCargoSpace();
 
 						if (rRequiredCargoSpace > rNewCargoSpace)
@@ -3114,6 +3116,15 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 
 	else if (strEquals(sName, PROPERTY_CARGO_SPACE))
 		return CC.CreateInteger(CalcMaxCargoSpace());
+
+	else if (strEquals(sName, PROPERTY_CARGO_SPACE_FREE_KG))
+		return CC.CreateInteger(mathRound(GetCargoSpaceLeft() * 1000.0));
+
+	else if (strEquals(sName, PROPERTY_CARGO_SPACE_USED_KG))
+		{
+		OnComponentChanged(comCargo);
+		return CC.CreateInteger(mathRound(GetCargoMass() * 1000.0));
+		}
 
 	else if (strEquals(sName, PROPERTY_CHARACTER))
 		return (m_pCharacter ? CC.CreateInteger(m_pCharacter->GetUNID()) : CC.CreateNil());
@@ -6634,7 +6645,7 @@ void CShip::PaintShipCompartments (CG32bitImage &Dest, SViewportPaintCtx &Ctx)
 		}
 	}
 
-bool CShip::PointInObject (const CVector &vObjPos, const CVector &vPointPos)
+bool CShip::PointInObject (const CVector &vObjPos, const CVector &vPointPos) const
 
 //	PointInObject
 //
@@ -6657,7 +6668,7 @@ bool CShip::PointInObject (const CVector &vObjPos, const CVector &vPointPos)
 	DEBUG_CATCH
 	}
 
-bool CShip::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const CVector &vPointPos)
+bool CShip::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const CVector &vPointPos) const
 
 //	PointInObject
 //
@@ -6680,7 +6691,7 @@ bool CShip::PointInObject (SPointInObjectCtx &Ctx, const CVector &vObjPos, const
 	DEBUG_CATCH
 	}
 
-void CShip::PointInObjectInit (SPointInObjectCtx &Ctx)
+void CShip::PointInObjectInit (SPointInObjectCtx &Ctx) const
 
 //	PointInObjectInit
 //

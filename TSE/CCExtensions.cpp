@@ -1453,7 +1453,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'SRS\n"
 			"   'SRSEnhancer\n"
 			"   'SystemMap\n"
-			"   'TargetingComputer\n\n"
+			"   'TargetingComputer\n"
+			"   'TradingComputer\n\n"
 			
 			"command\n\n"
 			
@@ -2422,11 +2423,14 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'isRecorded        Mission has been completed and debriefed\n"
 			"   'isSuccess         Mission has succeeded\n"
 			"   'isUnavailable     Mission is unavailable to player\n"
+			"   'maxAppearing      Max number of this type that can exist\n"
 			"   'name              The name of the mission\n"
 			"   'nodeID            ID of the mission's owner system\n"
 			"   'ownerID           ID of the mission's owner object\n"
 			"   'priority          Mission priority\n"
 			"   'summary           A summary description of the mission\n"
+			"   'totalAccepted     Count of this type accepted by player\n"
+			"   'totalExisting     Count of this type currently existing in universe\n"
 			"   'unid              Mission type UNID",
 
 			"is",	0,	},
@@ -2436,7 +2440,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			NULL,	0,	},
 
 		{	"msnGetTypeData",				fnObjData,		FN_OBJ_GET_GLOBAL_DATA,
-			"(msnGetTypeData obj attrib) -> data",
+			"(msnGetTypeData missionObj attrib) -> data",
 			NULL,	0,	},
 
 		{	"msnIncData",					fnObjData,		FN_OBJ_INCREMENT_DATA,
@@ -2478,7 +2482,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"isv",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"msnSetTypeData",				fnObjData,		FN_OBJ_SET_GLOBAL_DATA,
-			"(msnSetTypeData obj attrib data)",
+			"(msnSetTypeData missionObj attrib data)",
 			NULL,	PPFLAG_SIDEEFFECTS,	},
 
 		{	"msnSetUnavailable",			fnMissionSet,		FN_MISSION_CLOSED,
@@ -2716,7 +2720,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   Z           Exclude the player\n"
 			"   +xyz;       Only objects with attribute 'xyz'\n"
 			"   -xyz;       Exclude objects with attribute 'xyz'\n"
-			"   =n;         Only objects of level n. You can also replace = with &gt;, &lt;, &gt;=, or &lt;=.\n\n"
+			"   =n;         Only objects of level n. You can also replace = with >, <, >=, or <=,\n"
+			"				but they need to be escaped in XML.\n\n"
 			
 			"   +/-data:xyz;        Include only/exclude objects with data 'xyz'\n"
 			"   +/-isPlanet:true;   Include only/exclude planets\n"
@@ -3057,6 +3062,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 
 			"criteria\n\n"
 			
+			"   *                  Include all Types\n"
 			"   a                  AdventureDesc\n"
 			"   b                  ItemTable\n"
 			"   c                  EffectType\n"
@@ -3079,8 +3085,11 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   z                  SystemMap\n"
 			"   $                  EconomyType\n"
 			"\n"
+			"   L:x-y              Only Types of level x to y\n"
 			"   V                  Include virtual types\n"
 			"   +/-{attrib}        Require/exclude types with given attribute\n"
+			"   +/-event:xyz;      Require/exclude types with given event\n"
+			"   +/-isEnemyOf:xyz;  Require/exclude types which are enemy of sovereign\n"
 			"   =n;                Level comparisons (also supports < etc.)",
 
 			"s",	0,	},
@@ -3417,13 +3426,18 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 
 			"criteria\n\n"
 			
+			"   *                  Include all types\n"
 			"   s                  ShipClass\n"
 			"   t                  StationType\n"
 			"   T                  StationType (structure-scale)\n"
+			"\n"
+			"   A                  Active objects only\n"
+			"   K                  Killed objects only\n"
+			"   L:x-y;             Objects of level x to y\n"
 			"   V                  Include virtual objects\n"
-			"   +/-{attrib}        Require/exclude types with given attribute\n\n"
+			"   +/-{attrib}        Require/exclude types with given attribute\n"
 			"   +/-unid:{unid}     Require/exclude types of given unid\n"
-			"   =n;                Level comparisons (also supports < etc.)\n"
+			"   =n;                Level comparisons (also supports < etc.)\n\n"
 
 			"entry\n\n"
 			
@@ -6782,10 +6796,9 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			CSpaceObject *pSource = CreateObjFromItem(*pCC, pArgs->GetElement(1));
 
 			CString sFilter = pArgs->GetElement(2)->GetStringValue();
-			CSpaceObject::Criteria Criteria;
-			CSpaceObject::ParseCriteria(pSource, sFilter, &Criteria);
+			CSpaceObjectCriteria Criteria(pSource, sFilter);
 
-			CSpaceObject::SCriteriaMatchCtx Ctx(Criteria);
+			CSpaceObjectCriteria::SCtx Ctx(Criteria);
 			return pCC->CreateBool(pObj->MatchesCriteria(Ctx, Criteria));
 			}
 
@@ -12135,31 +12148,33 @@ ICCItem *fnSystemFind (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 	//	Second argument is the filter
 
 	CString sFilter = pArgs->GetElement(1)->GetStringValue();
-	CSpaceObject::Criteria Criteria;
-	CSpaceObject::ParseCriteria(pSource, sFilter, &Criteria);
+	CSpaceObjectCriteria Criteria(pSource, sFilter);
 
 	//	If we're checking for position, we need to do some extra work
 
 	if (dwData == FN_SYS_FIND_AT_POS)
 		{
-		if (GetPosOrObject(pEvalCtx, pArgs->GetElement(2), &Criteria.vPos1) != NOERROR)
+		CVector vPos1;
+		CVector vPos2;
+
+		if (GetPosOrObject(pEvalCtx, pArgs->GetElement(2), &vPos1) != NOERROR)
 			return pCC->CreateError(CONSTLIT("Invalid position"), pArgs->GetElement(2));
 
 		//	If we have two position parameters, then this is a line intersection
 
 		if (pArgs->GetCount() >= 4)
 			{
-			if (GetPosOrObject(pEvalCtx, pArgs->GetElement(3), &Criteria.vPos2) != NOERROR)
+			if (GetPosOrObject(pEvalCtx, pArgs->GetElement(3), &vPos2) != NOERROR)
 				return pCC->CreateError(CONSTLIT("Invalid position"), pArgs->GetElement(3));
 
-			Criteria.iPosCheck = CSpaceObject::checkLineIntersect;
+			Criteria.SetLineIntersect(vPos1, vPos2);
 			}
 
 		//	Otherwise, just a point intersection
 
 		else
 			{
-			Criteria.iPosCheck = CSpaceObject::checkPosIntersect;
+			Criteria.SetPosIntersect(vPos1);
 			}
 		}
 
@@ -12173,7 +12188,7 @@ ICCItem *fnSystemFind (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 	
 	ICCItem *pResult;
 	CCLinkedList *pList;
-	if (!Criteria.bNearestOnly && !Criteria.bFarthestOnly)
+	if (!Criteria.MatchesNearestOnly() && !Criteria.MatchesFarthestOnly())
 		{
 		pResult = pCC->CreateLinkedList();
 		if (pResult->IsError())
@@ -12191,11 +12206,11 @@ ICCItem *fnSystemFind (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 	//	NOTE: We have this convoluted code path because we want to optimize
 	//	adding items to our list [not sure if it's worth it, though].
 
-	bool bGenerateOurOwnList = (pList && (Criteria.iSort == CSpaceObject::sortNone));
+	bool bGenerateOurOwnList = (pList && (Criteria.GetSort() == CSpaceObjectCriteria::sortNone));
 
 	//	Do the search
 
-	CSpaceObject::SCriteriaMatchCtx Ctx(Criteria);
+	CSpaceObjectCriteria::SCtx Ctx(Criteria);
 	for (i = 0; i < pSystem->GetObjectCount(); i++)
 		{
 		CSpaceObject *pObj = pSystem->GetObject(i);
@@ -12214,7 +12229,7 @@ ICCItem *fnSystemFind (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 	//	If we only want the nearest/farthest object, then find it now
 
-	if (Criteria.bNearestOnly || Criteria.bFarthestOnly)
+	if (Criteria.MatchesNearestOnly() || Criteria.MatchesFarthestOnly())
 		{
 		//	Return the object
 
@@ -13399,7 +13414,6 @@ ICCItem *fnSystemVectorMath (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwDat
 //	(sysVectorSubtract vector vector) -> vector
 
 	{
-	int i;
 	CCodeChain *pCC = pEvalCtx->pCC;
 
 	switch (dwData)
@@ -13520,13 +13534,10 @@ ICCItem *fnSystemVectorMath (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwDat
 			if (pArgs->GetCount() > 3)
 				sFilter = pArgs->GetElement(3)->GetStringValue();
 
-			CSpaceObject::Criteria Criteria;
-			CSpaceObject::ParseCriteria(pSource, sFilter, &Criteria);
+			CSpaceObjectCriteria Criteria(pSource, sFilter);
 
 			//	Keep trying random positions until we find something that works
 			//	(or until we run out of tries)
-
-			Metric rMinDist2 = rSeparation * rSeparation;
 
 			int iTries = 100;
 			while (iTries > 0)
@@ -13553,29 +13564,11 @@ ICCItem *fnSystemVectorMath (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwDat
 
 				CVector vTry = vCenter + vOffset;
 
-				//	See if any object is within the separation range
+				//	See if any object is within the separation range. If there 
+				//	is, then we continue.
 
-				CSpaceObject::SCriteriaMatchCtx Ctx(Criteria);
-				bool bTooClose = false;
-				for (i = 0; i < pSystem->GetObjectCount(); i++)
-					{
-					CSpaceObject *pObj = pSystem->GetObject(i);
-					if (pObj 
-							&& pObj->MatchesCriteria(Ctx, Criteria)
-							&& (!pObj->IsIntangible() || pObj->IsVirtual()))
-						{
-						Metric rDist2 = (pObj->GetPos() - vTry).Length2();
-						if (rDist2 < rMinDist2)
-							{
-							bTooClose = true;
-							break;
-							}
-						}
-					}
-
-				//	If we didn't find a good spot, then continue
-
-				if (bTooClose && --iTries > 0)
+				if (pSystem->FindObjectInRange(vTry, rSeparation, Criteria)
+						&& --iTries > 0)
 					continue;
 
 				//	Otherwise, use the vector

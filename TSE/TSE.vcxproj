@@ -261,6 +261,7 @@
     <ClInclude Include="..\Include\TSELanguage.h" />
     <ClInclude Include="..\Include\TSEMapPainters.h" />
     <ClInclude Include="..\Include\TSEMissionType.h" />
+    <ClInclude Include="..\Include\TSEObjectCriteria.h" />
     <ClInclude Include="..\Include\TSEObjectJoints.h" />
     <ClInclude Include="..\Include\TSEOverlayType.h" />
     <ClInclude Include="..\Include\TSEPaint.h" />
@@ -388,6 +389,7 @@
     <ClCompile Include="CIntegralRotationDesc.cpp" />
     <ClCompile Include="CItemLevelCriteria.cpp" />
     <ClCompile Include="CItemPriceTracker.cpp" />
+    <ClCompile Include="CItemTypeProbabilityTable.cpp" />
     <ClCompile Include="CLanguage.cpp" />
     <ClCompile Include="CLightningBundlePainter.cpp" />
     <ClCompile Include="CNameDesc.cpp" />
@@ -470,6 +472,7 @@
     <ClCompile Include="CSimplePathStargateGenerator.cpp" />
     <ClCompile Include="CSoundResource.cpp" />
     <ClCompile Include="CSpaceObjectAddressResolver.cpp" />
+    <ClCompile Include="CSpaceObjectCriteria.cpp" />
     <ClCompile Include="CSpaceObjectTrade.cpp" />
     <ClCompile Include="CSphericalTextureMapper.cpp" />
     <ClCompile Include="CStationEncounterCtx.cpp" />
