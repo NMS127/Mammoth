@@ -16,6 +16,7 @@
 #define ANGLE_ATTRIB							CONSTLIT("angle")
 #define CHARGES_ATTRIB							CONSTLIT("charges")
 #define CONFIGURATION_ATTRIB					CONSTLIT("configuration")
+#define CONTINUOUS_CONSUME_PERSHOT_ATTRIB		CONSTLIT("consumeAmmoPerRepeatingShot")
 #define COOLING_RATE_ATTRIB						CONSTLIT("coolingRate")
 #define COUNTER_ATTRIB							CONSTLIT("counter")
 #define COUNTER_ACTIVATE_ATTRIB					CONSTLIT("counterActivate")
@@ -50,6 +51,8 @@
 #define COUNTER_TYPE_CAPACITOR					CONSTLIT("capacitor")
 
 #define ON_FIRE_WEAPON_EVENT					CONSTLIT("OnFireWeapon")
+#define GET_AMMO_TO_CONSUME_EVENT				CONSTLIT("GetAmmoToConsume")
+
 
 #define FIELD_AMMO_TYPE							CONSTLIT("ammoType")
 #define FIELD_AVERAGE_DAMAGE					CONSTLIT("averageDamage")	//	Average damage (1000x hp)
@@ -165,6 +168,7 @@ const Metric BALANCE_SHIELD_LEVEL_FACTOR =      10;         //  Bonus to balance
 const Metric BALANCE_ARMOR_LEVEL_FACTOR =       20;         //  Bonus to balance proportional to armor damage level
 const Metric BALANCE_MINING_FACTOR =            0.1;        //  Bonus to balance for each % of mining adj
 const Metric BALANCE_WMD_FACTOR =               0.5;        //  Bonust to balance for each % of WMD
+const Metric BALANCE_TIME_STOP_LEVEL_FACTOR =	50;         //  Bonus to balance proportional to time stop level
 
 const Metric PARTICLE_CLOUD_DAMAGE_FACTOR =		0.75;
 const Metric SHOCKWAVE_DAMAGE_FACTOR =			4.0;
@@ -206,6 +210,7 @@ static CWeaponClass::SStdStats STD_WEAPON_STATS[MAX_ITEM_LEVEL] =
 static char *CACHED_EVENTS[CWeaponClass::evtCount] =
 	{
 		"OnFireWeapon",
+		"GetAmmoToConsume",
 	};
 
 CFailureDesc CWeaponClass::g_DefaultFailure(CFailureDesc::profileWeaponFailure);
@@ -602,6 +607,15 @@ int CWeaponClass::CalcBalance (CItemCtx &ItemCtx, SBalance &retBalance) const
         int iEffectLevel = Max(0, 3 + iDamage - retBalance.iLevel);
         retBalance.rArmor = BALANCE_ARMOR_LEVEL_FACTOR * iEffectLevel;
         retBalance.rBalance += retBalance.rArmor;
+        }
+
+	//	Time stop
+
+    if (iDamage = pShot->GetSpecialDamage(specialTimeStop))
+        {
+        int iEffectLevel = Max(0, 3 + iDamage - retBalance.iLevel);
+        retBalance.rTimeStop = BALANCE_TIME_STOP_LEVEL_FACTOR * iEffectLevel;
+        retBalance.rBalance += retBalance.rTimeStop;
         }
 
     //  Mining
@@ -1292,19 +1306,23 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 	if (pDevice == NULL)
 		return false;
 
+	int iAmmoConsumed = FireGetAmmoToConsume(ItemCtx, pShot, iRepeatingCount);
+
 	//	For repeating weapons, we check at the beginning and consume at the end.
 	
 	if (pShot->GetContinuous() > 0)
 		{
-		if (iRepeatingCount == 0)
+		if ((iRepeatingCount == 0) || m_bContinuousConsumePerShot)
 			{
 			//	If ammo items...
 
 			if (pShot->GetAmmoType())
 				{
 				CItemListManipulator ItemList(pSource->GetItemList());
-				CItem Item(pShot->GetAmmoType(), 1);
+				CItem Item(pShot->GetAmmoType(), iAmmoConsumed);
 				if (!ItemList.SetCursorAtItem(Item, CItem::FLAG_IGNORE_CHARGES))
+					return false;
+				if (ItemList.GetItemAtCursor().GetCount() < iAmmoConsumed)
 					return false;
 				}
 
@@ -1312,17 +1330,18 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 
 			else if (m_bCharges)
 				{
-				if (pDevice->GetCharges(pSource) <= 0)
+				if (pDevice->GetCharges(pSource) < iAmmoConsumed)
 					return false;
 				}
 
-			//	We don't consume yet
-
-			return true;
+			//	We don't consume yet (unless m_bContinuousConsumePerShot is true)
+			
+			if (!m_bContinuousConsumePerShot)
+				return true;
 			}
-		else if (iRepeatingCount != pShot->GetContinuous())
+		else if ((iRepeatingCount != pShot->GetContinuous()) && !m_bContinuousConsumePerShot)
 			{
-			//	We don't consume until the last shot.
+			//	We don't consume until the last shot, unless m_bContinuousConsumePerShot is true.
 
 			return true;
 			}
@@ -1339,8 +1358,10 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 		//	have none, so we fail.
 
 		CItemListManipulator ItemList(pSource->GetItemList());
-		CItem Item(pShot->GetAmmoType(), 1);
+		CItem Item(pShot->GetAmmoType(), iAmmoConsumed);
 		if (!ItemList.SetCursorAtItem(Item, CItem::FLAG_IGNORE_CHARGES))
+			return false;
+		if (ItemList.GetItemAtCursor().GetCount() < iAmmoConsumed)
 			return false;
 
 		//	If the ammo uses charges, then we need a different algorithm.
@@ -1355,9 +1376,9 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 			//	use up the last charge. But if somehow we get it, we destroy it
 			//	here too.)
 
-			if (AmmoItem.GetCharges() <= 1)
+			if (AmmoItem.GetCharges() <= iAmmoConsumed)
 				{
-				ItemList.DeleteAtCursor(1);
+				ItemList.DeleteAtCursor(AmmoItem.GetCharges());
 
 				//	See if we have any other items with charges. If not, then
 				//	we need to select the next weapon.
@@ -1369,7 +1390,7 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 			//	Otherwise, we decrement.
 
 			else
-				ItemList.SetChargesAtCursor(AmmoItem.GetCharges() - 1);
+				ItemList.SetChargesAtCursor(AmmoItem.GetCharges() - iAmmoConsumed);
 			}
 
 		//	Otherwise, consume an item
@@ -1379,10 +1400,10 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 			//	If we've exhausted our ammunition, remember to
 			//	select the next variant
 
-			if (ItemList.GetItemAtCursor().GetCount() == 1)
+			if (ItemList.GetItemAtCursor().GetCount() == iAmmoConsumed)
 				bNextVariant = true;
 
-			ItemList.DeleteAtCursor(1);
+			ItemList.DeleteAtCursor(iAmmoConsumed);
 			}
 
 		//	We consumed an item
@@ -1394,12 +1415,12 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 		{
 		//	If no charges left, then we cannot consume
 
-		if (pDevice->GetCharges(pSource) <= 0)
+		if (pDevice->GetCharges(pSource) < iAmmoConsumed)
 			return false;
 
 		//	Consume charges
 
-		pDevice->IncCharges(pSource, -1);
+		pDevice->IncCharges(pSource, -iAmmoConsumed);
 		if (retbConsumed)
 			*retbConsumed = true;
 		}
@@ -1479,6 +1500,8 @@ ALERROR CWeaponClass::CreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CI
 	pWeapon->m_bMIRV = pDesc->GetAttributeBool(MULTI_TARGET_ATTRIB);
 	pWeapon->m_bReportAmmo = pDesc->GetAttributeBool(REPORT_AMMO_ATTRIB);
 	pWeapon->m_bTargetStationsOnly = pDesc->GetAttributeBool(TARGET_STATIONS_ONLY_ATTRIB);
+	pWeapon->m_bContinuousConsumePerShot = pDesc->GetAttributeBool(CONTINUOUS_CONSUME_PERSHOT_ATTRIB);
+
 
 	//	Configuration
 
@@ -1618,19 +1641,20 @@ void CWeaponClass::FailureExplosion (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, 
 	if (pDevice == NULL)
 		return;
 
-	SDamageCtx Ctx;
-	Ctx.pObj = pSource;
-	Ctx.pDesc = pShot;
-	Ctx.Damage = pShot->GetDamage();
-	Ctx.Damage.SetCause(killedByWeaponMalfunction);
-	Ctx.iDirection = (pDevice->GetPosAngle() + 360 + mathRandom(0, 30) - 15) % 360;
-	Ctx.vHitPos = pDevice->GetPos(pSource);
-	Ctx.pCause = pSource;
-	Ctx.Attacker = CDamageSource(pSource, killedByWeaponMalfunction);
-	Ctx.bIgnoreOverlays = true;
-	Ctx.bIgnoreShields = true;
+	SDamageCtx DamageCtx(pSource,
+			pShot,
+			NULL,
+			CDamageSource(pSource, killedByWeaponMalfunction),
+			pSource,
+			AngleMod(pDevice->GetPosAngle() + mathRandom(0, 30) - 15),
+			pDevice->GetPos(pSource));
 
-	EDamageResults iResult = pSource->Damage(Ctx);
+	//	Damage source is inside shields/overlays
+
+	DamageCtx.bIgnoreOverlays = true;
+	DamageCtx.bIgnoreShields = true;
+
+	EDamageResults iResult = pSource->Damage(DamageCtx);
 
 	if (iResult == damageDestroyed 
 			|| iResult == damageDisintegrated
@@ -1783,6 +1807,53 @@ bool CWeaponClass::FindDataField (const CString &sField, CString *retsValue)
 	return FindAmmoDataField(Ammo, sRootField, retsValue);
 	}
 
+int CWeaponClass::FireGetAmmoToConsume (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int iRepeatingCount)
+
+//	FireOnFireWeapon
+//
+//	Fires OnFireWeapon event
+//
+//	default (or Nil) = fire weapon as normal
+//	noShot = do not consume power or ammo
+//	shotFired (or True) = consume power and ammo normally
+
+	{
+	SEventHandlerDesc Event;
+	if (FindEventHandlerWeaponClass(evtGetAmmoToConsume, &Event))
+		{
+		CCodeChainCtx Ctx;
+		int iResult;
+		const CItemEnhancementStack *pEnhancement = ItemCtx.GetEnhancementStack();
+
+		Ctx.DefineContainingType(GetItemType());
+		Ctx.SaveAndDefineSourceVar(ItemCtx.GetSource());
+		Ctx.SaveAndDefineItemVar(ItemCtx);
+		Ctx.DefineInteger(CONSTLIT("aFireRepeat"), iRepeatingCount);
+		Ctx.DefineItemType(CONSTLIT("aWeaponType"), pShot->GetWeaponType());
+
+		ICCItem *pResult = Ctx.Run(Event);
+		if (pResult->IsError())
+			ItemCtx.GetSource()->ReportEventError(GET_AMMO_TO_CONSUME_EVENT, pResult);
+
+		if (pResult->IsInteger())
+			{
+			iResult = pResult->GetIntegerValue();
+			}
+		else
+			{
+			iResult = 1;
+			}
+
+		Ctx.Discard(pResult);
+
+		//	Done
+
+		return iResult;
+		}
+	else
+		return 1;
+	}
+
 CWeaponClass::EOnFireWeaponResults CWeaponClass::FireOnFireWeapon (CItemCtx &ItemCtx, 
 																   CWeaponFireDesc *pShot,
 																   const CVector &vSource,
@@ -1806,6 +1877,7 @@ CWeaponClass::EOnFireWeaponResults CWeaponClass::FireOnFireWeapon (CItemCtx &Ite
 		EOnFireWeaponResults iResult;
 		const CItemEnhancementStack *pEnhancement = ItemCtx.GetEnhancementStack();
 
+		Ctx.DefineContainingType(GetItemType());
 		Ctx.SaveAndDefineSourceVar(ItemCtx.GetSource());
 		Ctx.SaveAndDefineItemVar(ItemCtx);
 		Ctx.DefineInteger(CONSTLIT("aFireAngle"), iFireAngle);
@@ -4431,27 +4503,46 @@ void CWeaponClass::Update (CInstalledDevice *pDevice, CSpaceObject *pSource, SDe
 	DWORD dwContinuous = GetContinuousFire(pDevice);
 	if (dwContinuous == CONTINUOUS_START)
 		{
-		//	-1 is used to skip the first update cycle
-		//	(which happens on the same tick as Activate)
-
 		CWeaponFireDesc *pShot = GetWeaponFireDesc(ItemCtx);
-		SetContinuousFire(pDevice, (pShot ? pShot->GetContinuous() : 0));
+		if (pShot)
+			{
+			int iContinuousDelay = Max(1, pShot->GetContinuousFireDelay() + 1);
+
+			//	-1 is used to skip the first update cycle
+			//	(which happens on the same tick as Activate)
+
+			if (iContinuousDelay > 1)
+				{
+				SetContinuousFire(pDevice, ((pShot->GetContinuous() + 1) * iContinuousDelay) - 1);
+				}
+			else
+				{
+				SetContinuousFire(pDevice, pShot->GetContinuous());
+				}
+			}
+		else
+			SetContinuousFire(pDevice, 0);
 		}
 	else if (dwContinuous > 0)
 		{
 		CWeaponFireDesc *pShot = GetWeaponFireDesc(ItemCtx);
 		if (pShot)
 			{
-			FireWeapon(pDevice, 
-					pShot, 
-					pSource, 
-					NULL, 
-					1 + pShot->GetContinuous() - dwContinuous,
+			int iContinuousDelay = Max(1, pShot->GetContinuousFireDelay() + 1);
+
+			if ((dwContinuous % iContinuousDelay) == 0)
+				{
+				FireWeapon(pDevice,
+					pShot,
+					pSource,
+					NULL,
+					1 + pShot->GetContinuous() - (dwContinuous / iContinuousDelay),
 					&Ctx.bSourceDestroyed,
 					&Ctx.bConsumedItems);
 
-			if (Ctx.bSourceDestroyed)
-				return;
+				if (Ctx.bSourceDestroyed)
+					return;
+				}
 			}
 
 		dwContinuous--;

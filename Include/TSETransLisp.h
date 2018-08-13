@@ -33,6 +33,8 @@ class ICCItemPtr
 
 		void Delete (void);
 
+		bool Load (const CString &sCode, CString *retsError);
+
 		void TakeHandoff (ICCItem *pPtr);
 		void TakeHandoff (ICCItemPtr &Src);
 
@@ -93,6 +95,10 @@ class CCodeChainCtx
 		CCodeChainCtx (void);
 		~CCodeChainCtx (void);
 
+		void DefineContainingType (CDesignType *pType);
+		void DefineContainingType (const CItem &Item);
+		void DefineContainingType (const COverlay *pOverlay);
+		void DefineContainingType (CSpaceObject *pObj);
 		inline ICCItem *CreateNil (void) { return m_CC.CreateNil(); }
 		inline void DefineBool (const CString &sVar, bool bValue) { m_CC.DefineGlobal(sVar, (bValue ? m_CC.CreateTrue() : m_CC.CreateNil())); }
 		void DefineDamageCtx (const SDamageCtx &Ctx, int iDamage = -1);
@@ -130,6 +136,7 @@ class CCodeChainCtx
 		void SaveAndDefineOverlayID (DWORD dwID);
 		void SaveAndDefineSourceVar (CSpaceObject *pSource);
 		void SaveAndDefineSovereignVar (CSovereign *pSource);
+		void SaveAndDefineType (DWORD dwUNID);
 		void SaveItemVar (void);
 		void SaveSourceVar (void);
 		inline void SetDockScreenList (IListData *pListData) { m_pListData = pListData; }
@@ -178,6 +185,7 @@ class CCodeChainCtx
 		ICCItem *m_pOldSource;
 		ICCItem *m_pOldItem;
 		ICCItem *m_pOldOverlayID;
+		ICCItem *m_pOldType;
 
 		bool m_bRestoreGlobalDefineHook;
 		IItemTransform *m_pOldGlobalDefineHook;

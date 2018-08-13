@@ -54,6 +54,7 @@ static CObjectClass<CSpaceObject>g_Class(OBJID_CSPACEOBJECT);
 #define ON_DATA_TRANSFER_EVENT                  CONSTLIT("OnDataTransfer")
 #define ON_DESELECTED_EVENT						CONSTLIT("OnDeselected")
 #define ON_DESTROY_EVENT						CONSTLIT("OnDestroy")
+#define ON_DESTROY_OBJ_EVENT					CONSTLIT("OnDestroyObj")
 #define ON_DOCK_OBJ_ADJ_EVENT					CONSTLIT("OnDockObjAdj")
 #define ON_ENTERED_GATE_EVENT					CONSTLIT("OnEnteredGate")
 #define ON_ENTERED_SYSTEM_EVENT					CONSTLIT("OnEnteredSystem")
@@ -537,6 +538,23 @@ void CSpaceObject::AddOverlay (COverlayType *pType, const CVector &vPos, int iRo
 	AddOverlay(pType, iPosAngle, iPosRadius, iRotation, iLifetime, retdwID);
 	}
 
+void CSpaceObject::AddOverlay (DWORD dwUNID, int iPosAngle, int iPosRadius, int iRotation, int iLifetime, DWORD *retdwID)
+
+//	AddOverlay
+//
+//	Adds an overly by UNID
+
+	{
+	COverlayType *pType = g_pUniverse->FindOverlayType(dwUNID);
+	if (pType == NULL)
+		{
+		if (retdwID) *retdwID = 0;
+		return;
+		}
+
+	AddOverlay(pType, iPosAngle, iPosRadius, iRotation, iLifetime, retdwID);
+	}
+
 ALERROR CSpaceObject::AddToSystem (CSystem *pSystem, bool bNoGlobalInsert)
 
 //	AddToSystem
@@ -845,6 +863,7 @@ bool CSpaceObject::CanCommunicateWith (CSpaceObject *pSender)
 
 			//	Define parameters
 
+			Ctx.DefineContainingType(this);
 			Ctx.SaveAndDefineSourceVar(this);
 			Ctx.DefineSpaceObject(CONSTLIT("gSender"), pSender);
 
@@ -913,6 +932,25 @@ bool CSpaceObject::CanInstallItem (const CItem &Item, int iSlot, InstallItemResu
 	return false;
 	}
 
+void CSpaceObject::ClearCondition (CConditionSet::ETypes iCondition, DWORD dwFlags)
+
+//	ClearCondition
+//
+//	Clears the given condition (generically).
+
+	{
+	switch (iCondition)
+		{
+		case CConditionSet::cndTimeStopped:
+			m_fTimeStop = false;
+			break;
+
+		default:
+			OnClearCondition(iCondition, dwFlags);
+			break;
+		}
+	}
+
 void CSpaceObject::CommsMessageFrom (CSpaceObject *pSender, int iIndex)
 
 //	CommsMessageFrom
@@ -930,6 +968,7 @@ void CSpaceObject::CommsMessageFrom (CSpaceObject *pSender, int iIndex)
 
 		//	Define parameters
 
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("gSender"), pSender);
 
@@ -1002,6 +1041,7 @@ void CSpaceObject::CopyDataFromObj (CSpaceObject *pSource)
 		{
 		CCodeChainCtx Ctx;
 
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -1483,6 +1523,9 @@ void CSpaceObject::Destroy (DestructionTypes iCause, const CDamageSource &Attack
 	if (pWeaponDesc)
 		pWeaponDesc->FireOnDestroyObj(Ctx);
 
+	if (Attacker.GetObj())
+		Attacker.GetObj()->FireOnDestroyObj(Ctx);
+
 	//	Remove from the object from the universal list (NOTE: We must do this
 	//	before we clear out m_pSystem.)
 
@@ -1814,6 +1857,7 @@ bool CSpaceObject::FireCanDockAsPlayer (CSpaceObject *pDockTarget, CString *rets
 	if (FindEventHandler(CAN_DOCK_AS_PLAYER_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aDockTarget"), pDockTarget);
 
@@ -1853,9 +1897,10 @@ bool CSpaceObject::FireCanInstallItem (const CItem &Item, int iSlot, CString *re
 	if (FindEventHandler(CDesignType::evtCanInstallItem, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.SaveAndDefineItemVar(Item);
+
 		if (iSlot == -1)
 			{
 			Ctx.DefineNil(CONSTLIT("aArmorSeg"));
@@ -1916,7 +1961,7 @@ bool CSpaceObject::FireCanRemoveItem (const CItem &Item, int iSlot, CString *ret
 	if (FindEventHandler(CDesignType::evtCanRemoveItem, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.SaveAndDefineItemVar(Item);
 		if (iSlot != -1)
@@ -1962,6 +2007,7 @@ void CSpaceObject::FireCustomEvent (const CString &sEvent, ECodeChainEvents iEve
 	if (FindEventHandler(sEvent, &Event))
 		{
 		Ctx.SetEvent(iEvent);
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.SaveAndDefineDataVar(pData);
 
@@ -2029,6 +2075,7 @@ void CSpaceObject::FireCustomShipOrderEvent (const CString &sEvent, CSpaceObject
 	SEventHandlerDesc Event;
 	if (FindEventHandler(sEvent, &Event))
 		{
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
         Ctx.SaveAndDefineDataVar(NULL);
 		Ctx.DefineSpaceObject(CONSTLIT("aShipObj"), pShip);
@@ -2064,6 +2111,7 @@ bool CSpaceObject::FireGetDockScreen (CString *retsScreen, int *retiPriority, IC
 		return false;
 
 	CCodeChainCtx Ctx;
+	Ctx.DefineContainingType(const_cast<CSpaceObject *>(this));
 	Ctx.SaveAndDefineSourceVar(const_cast<CSpaceObject *>(this));
 
 	ICCItemPtr pResult = Ctx.RunCode(Event);
@@ -2088,7 +2136,7 @@ bool CSpaceObject::FireGetExplosionType (SExplosionType *retExplosion) const
 	if (FindEventHandler(GET_EXPLOSION_TYPE_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(const_cast<CSpaceObject *>(this));
 		Ctx.SaveAndDefineSourceVar(const_cast<CSpaceObject *>(this));
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -2173,6 +2221,7 @@ bool CSpaceObject::FireGetPlayerPriceAdj (STradeServiceCtx &ServiceCtx, ICCItem 
 		//	Set up
 
 		Ctx.SetEvent(eventGetTradePrice);
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		if (ServiceCtx.pItem)
 			{
@@ -2286,7 +2335,7 @@ void CSpaceObject::FireOnAttacked (const SDamageCtx &Ctx)
 	if (FindEventHandler(ON_ATTACKED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineDamageCtx(Ctx);
 
@@ -2314,7 +2363,7 @@ void CSpaceObject::FireOnAttackedByPlayer (void)
 	if (FindEventHandler(ON_ATTACKED_BY_PLAYER_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -2352,7 +2401,7 @@ void CSpaceObject::FireOnCreate (const SOnCreate &OnCreate)
 
 		CCodeChainCtx Ctx;
 		Ctx.SetSystemCreateCtx(OnCreate.pCreateCtx);
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.SaveAndDefineDataVar(OnCreate.pData);
 		Ctx.DefineSpaceObject(CONSTLIT("aBaseObj"), OnCreate.pBaseObj);
@@ -2393,7 +2442,7 @@ void CSpaceObject::FireOnCreateOrders (CSpaceObject *pBase, CSpaceObject *pTarge
 	if (FindEventHandler(ON_CREATE_ORDERS_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aBaseObj"), pBase);
 		Ctx.DefineSpaceObject(CONSTLIT("aTargetObj"), pTarget);
@@ -2417,7 +2466,7 @@ int CSpaceObject::FireOnDamage (SDamageCtx &Ctx, int iDamage)
 	if (FindEventHandler(ON_DAMAGE_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineDamageCtx(Ctx, iDamage);
 
@@ -2446,7 +2495,7 @@ void CSpaceObject::FireOnDeselected (void)
 	if (FindEventHandler(ON_DESELECTED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineInteger(CONSTLIT("aPlayer"), g_PlayerSovereignUNID);
 
@@ -2473,7 +2522,7 @@ void CSpaceObject::FireOnDestroy (const SDestroyCtx &Ctx)
 	if (FindEventHandler(ON_DESTROY_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
 		CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
@@ -2491,6 +2540,33 @@ void CSpaceObject::FireOnDestroy (const SDestroyCtx &Ctx)
 	DEBUG_CATCH
 	}
 
+void CSpaceObject::FireOnDestroyObj (const SDestroyCtx &Ctx)
+
+//	FireOnDestroyObj
+//
+//	Fire OnDestroyObj event
+
+	{
+	SEventHandlerDesc Event;
+
+	if (FindEventHandler(ON_DESTROY_OBJ_EVENT, &Event))
+		{
+		CCodeChainCtx CCCtx;
+		CCCtx.DefineContainingType(this);
+		CCCtx.SaveAndDefineSourceVar(this);
+		CCCtx.DefineSpaceObject(CONSTLIT("aObjDestroyed"), Ctx.pObj);
+		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
+		CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
+		CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+		CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
+
+		ICCItem *pResult = CCCtx.Run(Event);
+		if (pResult->IsError())
+			ReportEventError(ON_DESTROY_OBJ_EVENT, pResult);
+		CCCtx.Discard(pResult);
+		}
+	}
+
 bool CSpaceObject::FireOnDockObjAdj (CSpaceObject **retpObj)
 
 //	FireOnDockObjAdj
@@ -2503,7 +2579,7 @@ bool CSpaceObject::FireOnDockObjAdj (CSpaceObject **retpObj)
 	if (FindEventHandler(ON_DOCK_OBJ_ADJ_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -2547,7 +2623,7 @@ void CSpaceObject::FireOnEnteredGate (CTopologyNode *pDestNode, const CString &s
 	if (FindEventHandler(ON_ENTERED_GATE_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pGate);
 		Ctx.DefineString(CONSTLIT("aDestNodeID"), (pDestNode ? pDestNode->GetID() : NULL_STR));
@@ -2574,7 +2650,7 @@ void CSpaceObject::FireOnEnteredSystem (CSpaceObject *pGate)
 	if (FindEventHandler(ON_ENTERED_SYSTEM_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pGate);
 
@@ -2599,7 +2675,7 @@ void CSpaceObject::FireOnLoad (SLoadCtx &Ctx)
 	if (FindEventHandler(ON_LOAD_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineInteger(CONSTLIT("aVersion"), Ctx.dwVersion);
 
@@ -2622,7 +2698,7 @@ void CSpaceObject::FireOnMining (const SDamageCtx &Ctx)
 	if (FindEventHandler(ON_MINING_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aMiner"), Ctx.Attacker.GetObj());
 		CCCtx.DefineVector(CONSTLIT("aMinePos"), Ctx.vHitPos);
@@ -2651,7 +2727,7 @@ void CSpaceObject::FireOnMissionAccepted (CMission *pMission)
 	if (FindEventHandler(ON_MISSION_ACCEPTED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aMissionObj"), pMission);
 
@@ -2674,7 +2750,7 @@ void CSpaceObject::FireOnMissionCompleted (CMission *pMission, const CString &sR
 	if (FindEventHandler(ON_MISSION_COMPLETED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aMissionObj"), pMission);
 		CCCtx.DefineString(CONSTLIT("aReason"), sReason);
@@ -2698,7 +2774,7 @@ void CSpaceObject::FireOnObjBlacklistedPlayer (CSpaceObject *pObj)
 	if (FindEventHandler(ON_OBJ_BLACKLISTED_PLAYER_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 
@@ -2721,7 +2797,7 @@ void CSpaceObject::FireOnObjDestroyed (const SDestroyCtx &Ctx)
 	if (FindEventHandler(ON_OBJ_DESTROYED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aObjDestroyed"), Ctx.pObj);
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
@@ -2748,7 +2824,7 @@ void CSpaceObject::FireOnObjDocked (CSpaceObject *pObj, CSpaceObject *pDockTarge
 	if (FindEventHandler(ON_OBJ_DOCKED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObjDocked"), pObj);
 		Ctx.DefineSpaceObject(CONSTLIT("aDockTarget"), pDockTarget);
@@ -2772,7 +2848,7 @@ void CSpaceObject::FireOnObjEnteredGate (CSpaceObject *pObj, CTopologyNode *pDes
 	if (FindEventHandler(ON_OBJ_ENTERED_GATE_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 		Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pStargate);
@@ -2800,7 +2876,7 @@ bool CSpaceObject::FireOnObjGate (CSpaceObject *pObj)
 	if (FindEventHandler(ON_OBJ_GATE_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 
@@ -2838,6 +2914,7 @@ bool CSpaceObject::FireOnObjGateCheck (CSpaceObject *pObj, CTopologyNode *pDestN
 	//	Run
 
 	CCodeChainCtx Ctx;
+	Ctx.DefineContainingType(this);
 	Ctx.SaveAndDefineSourceVar(this);
 	Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 	Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pStargate);
@@ -2870,7 +2947,7 @@ void CSpaceObject::FireOnObjJumped (CSpaceObject *pObj)
 	if (FindEventHandler(ON_OBJ_JUMPED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 
@@ -2894,7 +2971,7 @@ bool CSpaceObject::FireOnObjJumpPosAdj (CSpaceObject *pObj, CVector *iovPos)
 	if (FindEventHandler(ON_OBJ_JUMP_POS_ADJ_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 		Ctx.DefineVector(CONSTLIT("aJumpPos"), *iovPos);
@@ -2940,7 +3017,7 @@ void CSpaceObject::FireOnObjReconned (CSpaceObject *pObj)
 	if (FindEventHandler(ON_OBJ_RECONNED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
 
@@ -2963,7 +3040,7 @@ void CSpaceObject::FireOnOrderChanged (void)
 	if (FindEventHandler(ON_ORDER_CHANGED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -2985,7 +3062,7 @@ void CSpaceObject::FireOnOrdersCompleted (void)
 	if (FindEventHandler(ON_ORDERS_COMPLETED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -3009,7 +3086,7 @@ void CSpaceObject::FireOnPlayerBlacklisted (void)
 	if (FindEventHandler(ON_PLAYER_BLACKLISTED_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -3038,7 +3115,7 @@ void CSpaceObject::FireOnPlayerEnteredShip (CSpaceObject *pOldShip)
 	if (FindEventHandler(ON_PLAYER_ENTERED_SHIP_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
         Ctx.DefineSpaceObject(CONSTLIT("aOldShip"), pOldShip);
 
@@ -3062,7 +3139,7 @@ CSpaceObject::InterSystemResults CSpaceObject::FireOnPlayerEnteredSystem (CSpace
 	if (FindEventHandler(ON_PLAYER_ENTERED_SYSTEM_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -3092,7 +3169,7 @@ void CSpaceObject::FireOnPlayerLeftShip (CSpaceObject *pNewShip)
 	if (FindEventHandler(ON_PLAYER_LEFT_SHIP_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
         Ctx.DefineSpaceObject(CONSTLIT("aNewShip"), pNewShip);
 
@@ -3116,7 +3193,7 @@ CSpaceObject::InterSystemResults CSpaceObject::FireOnPlayerLeftSystem (CSpaceObj
 	if (FindEventHandler(ON_PLAYER_LEFT_SYSTEM_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pStargate);
 		Ctx.DefineString(CONSTLIT("aDestNodeID"), (pDestNode ? pDestNode->GetID() : NULL_STR));
@@ -3147,7 +3224,7 @@ void CSpaceObject::FireOnSelected (void)
 	if (FindEventHandler(ON_SELECTED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineInteger(CONSTLIT("aPlayer"), g_PlayerSovereignUNID);
 
@@ -3174,7 +3251,7 @@ bool CSpaceObject::FireOnSubordinateAttacked (const SDamageCtx &Ctx)
 	if (bHandled = (HasOnSubordinateAttackedEvent() && FindEventHandler(ON_SUBORDINATE_ATTACKED_EVENT, &Event)))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineDamageCtx(Ctx);
 		CCCtx.DefineSpaceObject(CONSTLIT("aObjAttacked"), Ctx.pObj);
@@ -3205,7 +3282,7 @@ void CSpaceObject::FireOnSystemExplosion (CSpaceObject *pExplosion, CSpaceObject
 	if (FindEventHandler(ON_SYSTEM_EXPLOSION_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("aExplosionObj"), pSource);
 		Ctx.DefineInteger(CONSTLIT("aExplosionUNID"), dwItemUNID);
@@ -3230,7 +3307,7 @@ void CSpaceObject::FireOnSystemObjAttacked (SDamageCtx &Ctx)
 	if (FindEventHandler(CDesignType::evtOnSystemObjAttacked, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineDamageCtx(Ctx);
 		CCCtx.DefineSpaceObject(CONSTLIT("aObjAttacked"), Ctx.pObj);
@@ -3257,7 +3334,7 @@ void CSpaceObject::FireOnSystemObjDestroyed (SDestroyCtx &Ctx)
 	if (FindEventHandler(ON_SYSTEM_OBJ_DESTROYED_EVENT, &Event))
 		{
 		CCodeChainCtx CCCtx;
-
+		CCCtx.DefineContainingType(this);
 		CCCtx.SaveAndDefineSourceVar(this);
 		CCCtx.DefineSpaceObject(CONSTLIT("aObjDestroyed"), Ctx.pObj);
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
@@ -3284,7 +3361,7 @@ void CSpaceObject::FireOnSystemWeaponFire (CSpaceObject *pShot, CSpaceObject *pS
 	if (FindEventHandler(CDesignType::evtOnSystemWeaponFire, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineInteger(CONSTLIT("aFireRepeat"), iRepeatingCount);
 		Ctx.DefineSpaceObject(CONSTLIT("aShotObj"), pShot);
@@ -3314,7 +3391,7 @@ bool CSpaceObject::FireOnTranslateMessage (const CString &sMessage, CString *ret
 	if (FindEventHandler(ON_TRANSLATE_MESSAGE_EVENT, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineString(CONSTLIT("aMessage"), sMessage);
 
@@ -3345,7 +3422,7 @@ void CSpaceObject::FireOnUpdate (void)
 	if (FindEventHandler(CDesignType::evtOnUpdate, &Event))
 		{
 		CCodeChainCtx Ctx;
-
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -3398,6 +3475,56 @@ int CSpaceObject::GetCommsMessageCount (void)
 		return 0;
 	else
 		return pHandler->GetCount();
+	}
+
+bool CSpaceObject::GetCondition (CConditionSet::ETypes iCondition) const
+
+//	GetCondition
+//
+//	Returns TRUE if the object is in the given condition.
+
+	{
+	//	We handle certain conditions.
+
+	switch (iCondition)
+		{
+		case CConditionSet::cndTimeStopped:
+			if (m_fTimeStop)
+				return true;
+			break;
+		}
+
+	//	See if an overlay imparts this condition
+
+	const COverlayList *pList = GetOverlays();
+	if (pList && pList->GetConditions().IsSet(iCondition))
+		return true;
+
+	//	Finally, let the sub-class handle it.
+
+	return OnGetCondition(iCondition);
+	}
+
+CConditionSet CSpaceObject::GetConditions (void) const
+
+//	GetConditions
+//
+//	Returns the set of all conditions.
+
+	{
+	int i;
+
+	CConditionSet Conditions;
+	DWORD dwFlag = 1;
+	for (i = 0; i < CConditionSet::cndCount; i++)
+		{
+		if (GetCondition((CConditionSet::ETypes)dwFlag))
+			Conditions.Set((CConditionSet::ETypes)dwFlag);
+
+		dwFlag = dwFlag << 1;
+		}
+
+	return Conditions;
 	}
 
 int CSpaceObject::GetDataInteger (const CString &sAttrib) const
@@ -3609,6 +3736,20 @@ const CObjectImageArray &CSpaceObject::GetImage (void) const
 	{
 	static CObjectImageArray NullImage;
 	return NullImage;
+	}
+
+int CSpaceObject::GetImageScale (void) const
+
+//	GetImageScale
+//
+//	Returns the scale.
+
+	{
+	const CObjectImageArray &Image = GetImage();
+	if (Image.IsEmpty())
+		return 512;	//	Default
+
+	return Image.GetImageViewportSize();
 	}
 
 CItem CSpaceObject::GetItemForDevice (CInstalledDevice *pDevice)
@@ -4500,6 +4641,28 @@ CG32bitPixel CSpaceObject::GetSymbolColor (void)
 		return CG32bitPixel(0, 192, 0);
 	}
 
+const CEnhancementDesc *CSpaceObject::GetSystemEnhancements (void) const
+
+//	GetSystemEnhancements
+//
+//	Returns the list of system enhancements (or NULL if none).
+
+	{
+	CSystem *pSystem = GetSystem();
+	if (pSystem == NULL)
+		return NULL;
+
+	CSystemType *pType = pSystem->GetType();
+	if (pType == NULL)
+		return NULL;
+
+	const CEnhancementDesc &Enhancements = pType->GetItemEnhancements();
+	if (Enhancements.IsEmpty())
+		return NULL;
+
+	return &Enhancements;
+	}
+
 const CImageFilterStack *CSpaceObject::GetSystemFilters (void) const
 
 //	GetSystemFilters
@@ -4513,6 +4676,10 @@ const CImageFilterStack *CSpaceObject::GetSystemFilters (void) const
 
 	CSystemType *pType = pSystem->GetType();
 	if (pType == NULL)
+		return NULL;
+
+	if (!pType->GetImageFiltersCriteria().IsEmpty()
+			&& !MatchesCriteria(pType->GetImageFiltersCriteria()))
 		return NULL;
 
 	const CImageFilterStack *pFilters = &pType->GetImageFilters();
@@ -5274,6 +5441,7 @@ bool CSpaceObject::IsCommsMessageValidFrom (CSpaceObject *pSender, int iIndex, C
 
 		//	Define parameters
 
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.DefineSpaceObject(CONSTLIT("gSender"), pSender);
 
@@ -6076,6 +6244,36 @@ void CSpaceObject::OnObjDestroyed (const SDestroyCtx &Ctx)
 	//	Remove the object if it had a subscription to us
 
 	m_SubscribedObjs.Delete(Ctx.pObj);
+	}
+
+void CSpaceObject::SetCondition (CConditionSet::ETypes iCondition, int iTimer)
+
+//	SetCondition
+//
+//	Sets the given condition (generically).
+
+	{
+	switch (iCondition)
+		{
+		case CConditionSet::cndTimeStopped:
+			m_fTimeStop = true;
+			break;
+
+		default:
+			OnSetCondition(iCondition, iTimer);
+			break;
+		}
+	}
+
+void CSpaceObject::SetConditionDueToDamage (SDamageCtx &DamageCtx, CConditionSet::ETypes iCondition)
+
+//	SetConditionDueToDamage
+//
+//	The given damage has imparted the given condition. NOTE: The caller is 
+//	responsible for checking to see if the object is immune or not.
+
+	{
+	OnSetConditionDueToDamage(DamageCtx, iCondition);
 	}
 
 void CSpaceObject::Paint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx)
@@ -7001,6 +7199,7 @@ void CSpaceObject::SetOverride (CDesignType *pOverride)
 			{
 			CCodeChainCtx Ctx;
 
+			Ctx.DefineContainingType(this);
 			Ctx.SaveAndDefineSourceVar(this);
 
 			ICCItem *pResult = Ctx.Run(Event);
@@ -7024,6 +7223,7 @@ void CSpaceObject::SetOverride (CDesignType *pOverride)
 			{
 			CCodeChainCtx Ctx;
 
+			Ctx.DefineContainingType(this);
 			Ctx.SaveAndDefineSourceVar(this);
 
 			ICCItem *pResult = Ctx.Run(Event);
@@ -7167,7 +7367,77 @@ void CSpaceObject::Update (SUpdateCtx &Ctx)
 	{
 	SetInUpdateCode();
 
-	//	Update the highlight
+	//	Update as long as we are not time-stopped.
+
+	if (!Ctx.IsTimeStopped())
+		{
+		//	Update effects
+
+		if (m_pFirstEffect)
+			UpdateEffects();
+
+		//	Update items
+
+		if (IsDestinyTime(ITEM_ON_UPDATE_CYCLE, ITEM_ON_UPDATE_OFFSET))
+			{
+			FireItemOnUpdate();
+
+			//	We could have gotten destroyed here.
+
+			if (IsDestroyed())
+				{
+				ClearInUpdateCode();
+				return;
+				}
+			}
+
+		//	Update object
+
+		CDesignType *pType;
+		if (FindEventHandler(CDesignType::evtOnUpdate)
+				&& IsDestinyTime(OBJECT_ON_UPDATE_CYCLE, OBJECT_ON_UPDATE_OFFSET)
+				&& (pType = GetType())
+				//	Skip missiles, because we can't tell the difference between OnUpdate
+				//	for the item and OnUpdate for the missile object.
+				&& pType->GetType() != designItemType
+				&& pType->GetAPIVersion() >= 31)
+			{
+			FireOnUpdate();
+
+			//	We could have gotten destroyed here, so we check and leave if 
+			//	necessary.
+
+			if (IsDestroyed())
+				{
+				ClearInUpdateCode();
+				return;
+				}
+			}
+
+		//	Update the specific object subclass.
+
+		OnUpdate(Ctx, g_SecondsPerUpdate);
+		if (IsDestroyed())
+			{
+			ClearInUpdateCode();
+			return;
+			}
+		}
+
+	//	Otherwise, if we're time-stopped we need to update any overlays that
+	//	cause time stop (so that they can expire properly).
+
+	else
+		{
+		COverlayList *pOverlays = GetOverlays();
+		if (pOverlays)
+			pOverlays->UpdateTimeStopped(this, GetImageScale(), GetRotation());
+		}
+
+	//	Now update some variables that are only used by the player but relate
+	//	to this object.
+	//
+	//	NOTE: These should update even if we're time-stopped.
 
 	if (m_iHighlightCountdown > 0)
 		{
@@ -7175,52 +7445,14 @@ void CSpaceObject::Update (SUpdateCtx &Ctx)
 			m_sHighlightText = NULL_STR;
 		}
 
-	//	Update effects
-
-	if (m_pFirstEffect)
-		UpdateEffects();
-
-	//	Update items
-
-	if (IsDestinyTime(ITEM_ON_UPDATE_CYCLE, ITEM_ON_UPDATE_OFFSET))
-		{
-		FireItemOnUpdate();
-
-		//	We could have gotten destroyed here.
-
-		if (IsDestroyed())
-			{
-			ClearInUpdateCode();
-			return;
-			}
-		}
-
-	//	Update object
-
-	CDesignType *pType;
-	if (FindEventHandler(CDesignType::evtOnUpdate)
-			&& IsDestinyTime(OBJECT_ON_UPDATE_CYCLE, OBJECT_ON_UPDATE_OFFSET)
-			&& (pType = GetType())
-			&& pType->GetAPIVersion() >= 31)
-		{
-		FireOnUpdate();
-
-		//	We could have gotten destroyed here, so we check and leave if 
-		//	necessary.
-
-		if (IsDestroyed())
-			{
-			ClearInUpdateCode();
-			return;
-			}
-		}
-
 	//	See if this is the nearest player target
 
 	if (Ctx.pPlayer
 			&& !Ctx.pPlayer->IsDestroyed()
 			&& this != Ctx.pPlayer)
+		{
 		UpdatePlayerTarget(Ctx);
+		}
 
 	//	See if we have a dock screen. We only check every 20 ticks or so, so this
 	//	information might be stale. Use this for the docking ports animation, but
@@ -7233,10 +7465,6 @@ void CSpaceObject::Update (SUpdateCtx &Ctx)
 		{
 		m_fHasDockScreenMaybe = (CanObjRequestDock(Ctx.pPlayer) == dockingOK);
 		}
-
-	//	Update the specific object subclass.
-
-	OnUpdate(Ctx, g_SecondsPerUpdate);
 
 	//	Done
 
@@ -7452,6 +7680,7 @@ void CSpaceObject::UseItem (CItem &Item, CString *retsError)
 		{
 		//	Define parameters
 
+		Ctx.DefineContainingType(Item);
 		Ctx.SaveAndDefineSourceVar(this);
 		Ctx.SaveAndDefineItemVar(Item);
 		Ctx.SetScreensRoot(Item.GetType());

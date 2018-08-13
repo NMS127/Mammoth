@@ -77,6 +77,7 @@ const int g_TicksPerSecond =			30;			//	Frames per second of time
 const Metric g_LRSRange =				(100.0 * LIGHT_SECOND);	//	Range of LRS
 const Metric g_MapKlicksPerPixel =		g_AU / 400.0;//	400 pixels per AU
 const Metric g_InfiniteDistance =		g_AU * g_AU * 1000000.0;	//	A very large number
+const Metric g_InfiniteDistance2 =		g_InfiniteDistance * g_InfiniteDistance;	//	A very large number
 const Metric g_SpaceDragFactor =		0.98;		//	Coefficient of drag in space (1.0 = no drag)
 const Metric g_BounceCoefficient =		0.50;		//	Speed coefficient when bouncing
 const Metric g_MomentumConstant =		25.0;		//	Arbitrary constant for momentum
@@ -188,6 +189,7 @@ const DWORD COMPATIBLE_SHIP_CONFIG_SCREEN = 0x0000A01B;
 
 const DWORD UNID_DEFAULT_SYSTEM_BACKGROUND =	0x00030001;
 const DWORD UNID_DISINTEGRATION_EXPLOSION =	0x00030044;
+const DWORD UNID_TIME_STOP_OVERLAY =		0x00030080;
 
 #ifdef DEBUG_HENCHMAN
 const DWORD g_DebugHenchmenShipUNID =		0x00103001;	//	scCenturion

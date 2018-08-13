@@ -1022,8 +1022,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"v*",	0, },
 
 		{	"fmtNoun",						fnFormat,		FN_NAME,
-			"(fmtNoun name nameFlags count formatFlags) -> string",
-			"siiv",	0, },
+			"(fmtNoun namePattern [nameFlags] count formatFlags) -> string",
+			"v*iv",	0, },
 
 		{	"fmtNumber",					fnFormat,		FN_NUMBER,
 			"(fmtNumber [type] value) -> string\n\n"
@@ -1449,6 +1449,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'GalacticMap\n"
 			"   'FriendlyFireLock\n"
 			"   'LRS\n"
+			"   'MiningComputer\n"
 			"   'ProtectWingmen\n"
 			"   'SRS\n"
 			"   'SRSEnhancer\n"
@@ -1644,6 +1645,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'GalacticMap\n"
 			"   'FriendlyFireLock\n"
 			"   'LRS\n"
+			"   'MiningComputer\n"
 			"   'ProtectWingmen\n"
 			"   'SRS\n"
 			"   'SRSEnhancer\n"
@@ -1905,6 +1907,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'destNodeID\n"
 			"   'destStargateID\n"
 			"   'dockingPortCount\n"
+			"   'explored -> True if the player has docked with the station\n"
 			"   'hp\n"
 			"   'ignoreFriendlyFire\n"
 			"   'immutable\n"
@@ -2223,8 +2226,9 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 
 			"   'angry True|Nil|ticks\n"
 			"   'barrier True|Nil\n"
-			"   'ignoreFriendlyFire True|Nil\n"
+			"   'explored True|Nil\n"
 			"   'hp hitPoints\n"
+			"   'ignoreFriendlyFire True|Nil\n"
 			"   'immutable True|Nil\n"
 			"   'known True|Nil\n"
 			"   'maxHP hitPoints\n"
@@ -2771,8 +2775,15 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			NULL,	0,	},
 
 		{	"sysGetNodes",					fnSystemGet,	FN_SYS_ALL_NODES,
-			"(sysGetNodes) -> list of nodeIDs",
-			NULL,	0,	},
+			"(sysGetNodes [criteria]) -> list of nodeIDs\n\n"
+			
+			"criteria:\n\n"
+			
+			"   knownOnly:True  Only nodes known to player\n"
+			"   maxDist:n       Only nodes n or fewer gates away.\n"
+			"   minDist:n       Only nodes n or more gates away.\n",
+
+			"*",	0,	},
 
 		{	"sysGetObjectByName",			fnSystemGetObjectByName,	0,
 			"(sysGetObjectByName [source] name) -> obj",
@@ -4271,8 +4282,11 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			if (pObj == NULL)
 				return pCC->CreateNil();
 
+			CString sEvent = pArgs->GetElement(2)->GetStringValue();
+			ICCItem *pData = (pArgs->GetCount() >= 4 ? pArgs->GetElement(3) : NULL);
+
 			ICCItem *pResult;
-			pType->FireObjCustomEvent(pArgs->GetElement(2)->GetStringValue(), pObj, &pResult);
+			pType->FireObjCustomEvent(sEvent, pObj, pData, &pResult);
 			return pResult;
 			}
 
@@ -4469,10 +4483,40 @@ ICCItem *fnFormat (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 		case FN_NAME:
 			{
-			CString sName = pArgs->GetElement(0)->GetStringValue();
-			DWORD dwNameFlags = (DWORD)pArgs->GetElement(1)->GetIntegerValue();
-			int iCount = pArgs->GetElement(2)->GetIntegerValue();
-			DWORD dwFlags = pCtx->AsNameFlags(pArgs->GetElement(3));
+			//	We accept either 3 or 4 arguments
+
+			ICCItem *pName;
+			DWORD dwNameFlags;
+			int iCount;
+			DWORD dwFlags;
+
+			if (pArgs->GetCount() >= 4)
+				{
+				pName = pArgs->GetElement(0);
+				dwNameFlags = (DWORD)pArgs->GetElement(1)->GetIntegerValue();
+				iCount = pArgs->GetElement(2)->GetIntegerValue();
+				dwFlags = pCtx->AsNameFlags(pArgs->GetElement(3));
+				}
+			else
+				{
+				pName = pArgs->GetElement(0);
+				dwNameFlags = 0;
+				iCount = pArgs->GetElement(1)->GetIntegerValue();
+				dwFlags = pCtx->AsNameFlags(pArgs->GetElement(2));
+				}
+
+			//	Get a name pattern or a string.
+
+			CString sName;
+			if (pName->IsSymbolTable())
+				{
+				sName = pName->GetStringAt(CONSTLIT("pattern"));
+				dwNameFlags = pName->GetIntegerAt(CONSTLIT("flags"));
+				}
+			else
+				sName = pName->GetStringValue();
+
+			//	Compose
 
 			return pCC->CreateString(CLanguage::ComposeNounPhrase(sName, iCount, NULL_STR, dwNameFlags, dwFlags));
 			}
@@ -6155,19 +6199,20 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	After the call to pObj->Damage we must consider that pObj might
 			//	be destroyed (though not freed)
 
-			SDamageCtx Ctx;
-			Ctx.pObj = pObj;
-			Ctx.pDesc = pDesc;
-			Ctx.Damage = pDesc->GetDamage();
-			Ctx.iDirection = AngleMod(iDir + mathRandom(0, 30) - 15);
-			Ctx.vHitPos = vHitPos;
-			Ctx.Attacker = GetDamageSourceArg(*pCC, pArgs->GetElement(2));
-			Ctx.pCause = Ctx.Attacker.GetObj();
-			Ctx.bNoHitEffect = bNoHitEffect;
-			Ctx.bIgnoreOverlays = bIgnoreOverlays;
-			Ctx.bIgnoreShields = bIgnoreShields;
+			CDamageSource Attacker = GetDamageSourceArg(*pCC, pArgs->GetElement(2));
+			SDamageCtx DamageCtx(pObj,
+					pDesc,
+					NULL,
+					Attacker,
+					Attacker.GetObj(),
+					AngleMod(iDir + mathRandom(0, 30) - 15),
+					vHitPos);
 
-			EDamageResults result = pObj->Damage(Ctx);
+			DamageCtx.bNoHitEffect = bNoHitEffect;
+			DamageCtx.bIgnoreOverlays = bIgnoreOverlays;
+			DamageCtx.bIgnoreShields = bIgnoreShields;
+
+			EDamageResults result = pObj->Damage(DamageCtx);
 
 			//	Create fragments
 
@@ -6175,11 +6220,11 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 				{
 				SShotCreateCtx FragCtx;
 				FragCtx.pDesc = pDesc;
-				FragCtx.Source = Ctx.Attacker;
+				FragCtx.Source = DamageCtx.Attacker;
 				FragCtx.pTarget = (!pObj->IsDestroyed() ? pObj : NULL);
 				FragCtx.vPos = vHitPos;
 
-				pSystem->CreateWeaponFragments(FragCtx, Ctx.pCause);
+				pSystem->CreateWeaponFragments(FragCtx, DamageCtx.pCause);
 				}
 
 			//	No need to expose the concept of passthrough
@@ -6198,10 +6243,10 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 				ICCItem *pResult = pCC->CreateSymbolTable();
 
 				pResult->SetStringAt(*pCC, CONSTLIT("result"), GetDamageResultsName(result));
-				pResult->SetIntegerAt(*pCC, CONSTLIT("armorSeg"), Ctx.iSectHit);
-				pResult->SetIntegerAt(*pCC, CONSTLIT("overlayHitDamage"), Ctx.iOverlayHitDamage);
-				pResult->SetIntegerAt(*pCC, CONSTLIT("shieldHitDamage"), Ctx.iShieldHitDamage);
-				pResult->SetIntegerAt(*pCC, CONSTLIT("armorHitDamage"), Ctx.iArmorHitDamage);
+				pResult->SetIntegerAt(*pCC, CONSTLIT("armorSeg"), DamageCtx.iSectHit);
+				pResult->SetIntegerAt(*pCC, CONSTLIT("overlayHitDamage"), DamageCtx.iOverlayHitDamage);
+				pResult->SetIntegerAt(*pCC, CONSTLIT("shieldHitDamage"), DamageCtx.iShieldHitDamage);
+				pResult->SetIntegerAt(*pCC, CONSTLIT("armorHitDamage"), DamageCtx.iArmorHitDamage);
 
 				return pResult;
 				}
@@ -7857,9 +7902,7 @@ ICCItem *fnObjSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 		case FN_OBJ_FIX_PARALYSIS:
 			{
-			CShip *pShip = pObj->AsShip();
-			if (pShip)
-				pShip->ClearParalyzed();
+			pObj->ClearCondition(CConditionSet::cndParalyzed);
 			return pCC->CreateTrue();
 			}
 
@@ -8435,8 +8478,7 @@ ICCItem *fnObjSetOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 			int iTime = pArgs->GetElement(1)->GetIntegerValue();
 			pArgs->Discard(pCC);
 
-			pObj->MakeParalyzed(iTime);
-
+			pObj->SetCondition(CConditionSet::cndParalyzed, iTime);
 			pResult = pCC->CreateTrue();
 			break;
 			}
@@ -9242,7 +9284,7 @@ ICCItem *fnShipGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 				return pCC->CreateBool(pArmor->IsImmune(CItemCtx(pShip, pInstalled), specialRadiation));
 				}
 			else
-				return pCC->CreateBool(pShip->IsRadiationImmune());
+				return pCC->CreateBool(pShip->IsImmuneTo(CConditionSet::cndRadioactive));
 			break;
 			}
 
@@ -9392,12 +9434,12 @@ ICCItem *fnShipGetOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData
 			break;
 
 		case FN_SHIP_DECONTAMINATE:
-			pShip->Decontaminate();
+			pShip->ClearCondition(CConditionSet::cndRadioactive);
 			pResult = pCC->CreateTrue();
 			break;
 
 		case FN_SHIP_MAKE_RADIOACTIVE:
-			pShip->MakeRadioactive();
+			pShip->SetCondition(CConditionSet::cndRadioactive);
 			pResult = pCC->CreateTrue();
 			break;
 
@@ -9771,6 +9813,11 @@ ICCItem *fnShipSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Otherwise, install or remove
 
 			pShip->InstallItemAsDevice(ItemList, iDeviceSlot, iSlotPosIndex);
+
+			//	Make sure the cursor is still valid
+
+			if (!ItemList.IsCursorValid())
+				return pCC->CreateError(CONSTLIT("Installation did not preserve cursor."));
 
 			//	Done
 
@@ -11347,17 +11394,23 @@ ICCItem *fnSystemCreate (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 			//	Get Parameters to initialize context
 
-			SDamageCtx Ctx;
-			Ctx.pDesc = pDesc;
-			Ctx.pObj = CreateObjFromItem(*pCC, pArgs->GetElement(1));
-			Ctx.vHitPos = CreateVectorFromList(*pCC, pArgs->GetElement(2));
-			Ctx.iDirection = pArgs->GetElement(3)->GetIntegerValue();
-			Ctx.Damage = pDesc->GetDamage();
-			Ctx.iDamage = pArgs->GetElement(4)->GetIntegerValue();
+			CSpaceObject *pObj = CreateObjFromItem(*pCC, pArgs->GetElement(1));
+			CVector vHitPos = CreateVectorFromList(*pCC, pArgs->GetElement(2));
+			int iDir = pArgs->GetElement(3)->GetIntegerValue();
+
+			SDamageCtx DamageCtx(pObj,
+					pDesc,
+					NULL,
+					CDamageSource(),
+					NULL,
+					iDir,
+					vHitPos);
+
+			DamageCtx.iDamage = pArgs->GetElement(4)->GetIntegerValue();
 
 			//	Create the effect
 
-			pDesc->CreateHitEffect(pSystem, Ctx);
+			pDesc->CreateHitEffect(pSystem, DamageCtx);
 			return pCC->CreateTrue();
 			}
 
@@ -13188,25 +13241,57 @@ ICCItem *fnSystemGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 		case FN_SYS_ALL_NODES:
 			{
+			int i;
+
 			//	Create a list
 
 			ICCItem *pResult = pCC->CreateLinkedList();
 			if (pResult->IsError())
 				return pResult;
 
-			CCLinkedList *pList = (CCLinkedList *)pResult;
+			//	If we have no parameters, then we return all nodes
 
-			//	Loop over all topology nodes and add the IDs to the list
-
-			for (int i = 0; i < g_pUniverse->GetTopologyNodeCount(); i++)
+			if (pArgs->GetCount() == 0)
 				{
-				CTopologyNode *pNode = g_pUniverse->GetTopologyNode(i);
-				if (pNode->IsEndGame())
-					continue;
+				//	Loop over all topology nodes and add the IDs to the list
 
-				ICCItem *pValue = pCC->CreateString(pNode->GetID());
-				pList->Append(*pCC, pValue);
-				pValue->Discard(pCC);
+				for (i = 0; i < g_pUniverse->GetTopologyNodeCount(); i++)
+					{
+					CTopologyNode *pNode = g_pUniverse->GetTopologyNode(i);
+					if (pNode->IsEndGame())
+						continue;
+
+					pResult->AppendString(*pCC, pNode->GetID());
+					}
+				}
+
+			//	Otherwise, we expect a criteria parameter
+
+			else
+				{
+				ICCItem *pCriteria = pArgs->GetElement(0);
+				CTopologyNode::SCriteria Criteria;
+
+				CString sError;
+				if (CTopologyNode::ParseCriteria(pCriteria, Criteria, &sError) != NOERROR)
+					return pCC->CreateError(sError, pCriteria);
+
+				//	Loop
+
+				CTopologyNode::SCriteriaCtx Ctx;
+				CTopologyNode::InitCriteriaCtx(Ctx, Criteria);
+
+				for (i = 0; i < g_pUniverse->GetTopologyNodeCount(); i++)
+					{
+					CTopologyNode *pNode = g_pUniverse->GetTopologyNode(i);
+					if (pNode->IsEndGame())
+						continue;
+
+					if (!pNode->MatchesCriteria(Ctx, Criteria))
+						continue;
+
+					pResult->AppendString(*pCC, pNode->GetID());
+					}
 				}
 
 			return pResult;

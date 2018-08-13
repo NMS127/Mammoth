@@ -630,7 +630,8 @@ void CSystem::CalcViewportCtx (SViewportPaintCtx &Ctx, const RECT &rcView, CSpac
 
 	//	Initialize some flags
 
-	Ctx.fEnhancedDisplay = ((dwFlags & VWP_ENHANCED_DISPLAY) ? true : false);
+	Ctx.bEnhancedDisplay = ((dwFlags & VWP_ENHANCED_DISPLAY) ? true : false);
+	Ctx.bShowUnexploredAnnotation = ((dwFlags & VWP_MINING_DISPLAY) ? true : false);
 	Ctx.fNoStarfield = ((dwFlags & VWP_NO_STAR_FIELD) ? true : false);
 	Ctx.fShowManeuverEffects = g_pUniverse->GetSFXOptions().IsManeuveringEffectEnabled();
 	Ctx.fNoStarshine = !g_pUniverse->GetSFXOptions().IsStarshineEnabled();
@@ -3112,7 +3113,7 @@ void CSystem::PaintViewport (CG32bitImage &Dest,
 				bool bMarker = pObj->IsPlayerTarget()
 						|| pObj->IsPlayerDestination()
 						|| pObj->IsHighlighted()
-						|| (Ctx.fEnhancedDisplay
+						|| (Ctx.bEnhancedDisplay
 							&& (pObj->GetScale() == scaleShip || pObj->GetScale() == scaleStructure)
 							&& pObj->PosInBox(Ctx.vEnhancedUR, Ctx.vEnhancedLL)
 							&& Perception.IsVisibleInLRS(Ctx.pCenter, pObj)
@@ -4522,7 +4523,7 @@ void CSystem::StopTime (const CSpaceObjectList &Targets, int iDuration)
 		{
 		CSpaceObject *pObj = Targets.GetObj(i);
 
-		if (pObj && !pObj->IsTimeStopImmune())
+		if (pObj && !pObj->IsImmuneTo(CConditionSet::cndTimeStopped))
 			pObj->StopTime();
 		}
 
@@ -4543,7 +4544,7 @@ void CSystem::StopTimeForAll (int iDuration, CSpaceObject *pExcept)
 		{
 		CSpaceObject *pObj = GetObject(i);
 
-		if (pObj && pObj != pExcept && !pObj->IsTimeStopImmune())
+		if (pObj && pObj != pExcept && !pObj->IsImmuneTo(CConditionSet::cndTimeStopped))
 			pObj->StopTime();
 		}
 
@@ -4703,24 +4704,32 @@ void CSystem::Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnota
 	for (i = 0; i < GetObjectCount(); i++)
 		{
 		CSpaceObject *pObj = GetObject(i);
+		if (pObj == NULL)
+			continue;
 
-		if (pObj && !pObj->IsTimeStopped())
+		//	Initialize context
+
+		Ctx.SetTimeStopped(pObj->IsTimeStopped());
+
+		//	Update behavior first.
+
+		if (!Ctx.IsTimeStopped())
 			{
 			SetProgramState(psUpdatingBehavior, pObj);
 			pObj->Behavior(Ctx);
+			}
 
-			//	Update the objects
+		//	Now update. We do this even if we're time-stopped because we might
+		//	need to update the overlay that stops time.
 
-			SetProgramState(psUpdatingObj, pObj);
-			pObj->Update(Ctx);
+		SetProgramState(psUpdatingObj, pObj);
+		pObj->Update(Ctx);
 
-			//	NOTE: pObj may have been destroyed after
-			//	Update(). Do not use the pointer.
+		//	Debug
 
 #ifdef DEBUG_PERFORMANCE
-			iUpdateObj++;
+		iUpdateObj++;
 #endif
-			}
 		}
 	DebugStopTimer("Updating objects");
 

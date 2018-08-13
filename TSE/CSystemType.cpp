@@ -4,11 +4,13 @@
 
 #include "PreComp.h"
 
+#define ENHANCE_ABILITIES_TAG					CONSTLIT("EnhancementAbilities")
 #define IMAGE_FILTERS_TAG						CONSTLIT("ImageFilters")
 #define SYSTEM_GROUP_TAG						CONSTLIT("SystemGroup")
 #define TABLES_TAG								CONSTLIT("Tables")
 
 #define BACKGROUND_ID_ATTRIB					CONSTLIT("backgroundID")
+#define CRITERIA_ATTRIB							CONSTLIT("criteria")
 #define NO_EXTRA_ENCOUNTERS_ATTRIB				CONSTLIT("noExtraEncounters")
 #define NO_RANDOM_ENCOUNTERS_ATTRIB				CONSTLIT("noRandomEncounters")
 #define SPACE_SCALE_ATTRIB						CONSTLIT("spaceScale")
@@ -85,6 +87,7 @@ bool CSystemType::FireOnObjJumpPosAdj (CSpaceObject *pObj, CVector *iovPos)
 		{
 		CCodeChainCtx Ctx;
 
+		Ctx.DefineContainingType(this);
 		Ctx.SaveAndDefineSourceVar(pObj);
 		Ctx.DefineVector(CONSTLIT("aJumpPos"), *iovPos);
 
@@ -226,6 +229,17 @@ ALERROR CSystemType::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (pFilters)
 		{
 		if (error = m_ImageFilters.InitFromXML(Ctx, *pFilters))
+			return error;
+
+		m_ImageFilterCriteria.Init(pFilters->GetAttribute(CRITERIA_ATTRIB));
+		}
+
+	//	Enhancements
+
+	CXMLElement *pEnhanceList = pDesc->GetContentElementByTag(ENHANCE_ABILITIES_TAG);
+	if (pEnhanceList)
+		{
+		if (error = m_Enhancements.InitFromXML(Ctx, pEnhanceList))
 			return error;
 		}
 
