@@ -126,6 +126,7 @@
 #define SPECIAL_IS_LAUNCHER						CONSTLIT("isLauncher:")
 #define SPECIAL_LAUNCHED_BY						CONSTLIT("launchedBy:")
 #define SPECIAL_PROPERTY						CONSTLIT("property:")
+#define SPECIAL_UNKNOWN_TYPE					CONSTLIT("unknownType:")
 
 #define SPECIAL_TRUE							CONSTLIT("true")
 
@@ -317,7 +318,7 @@ void CItemType::CreateFlotsamImage (void)
 	rcRect.top = 0;
 	rcRect.right = m_FlotsamBitmap.GetWidth();
 	rcRect.bottom = m_FlotsamBitmap.GetHeight();
-	m_FlotsamImage.Init(&m_FlotsamBitmap, rcRect, 0, 0, false);
+	m_FlotsamImage.InitFromBitmap(&m_FlotsamBitmap, rcRect, 0, 0, false);
 	}
 
 bool CItemType::FindDataField (const CString &sField, CString *retsValue) const
@@ -1843,6 +1844,12 @@ bool CItemType::OnHasSpecialAttribute (const CString &sAttrib) const
 		pValue->Discard(&g_pUniverse->GetCC());
 
 		return bResult;
+		}
+	else if (strStartsWith(sAttrib, SPECIAL_UNKNOWN_TYPE))
+		{
+		CString sType = strSubString(sAttrib, SPECIAL_UNKNOWN_TYPE.GetLength());
+		DWORD dwType = strToInt(sType, 0);
+		return (m_pUnknownType && m_pUnknownType->GetUNID() == dwType);
 		}
 	else
 		return false;

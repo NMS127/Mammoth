@@ -379,6 +379,7 @@ class CFractureEffect : public CSpaceObject
 		virtual Categories GetCategory (void) const override { return catFractureEffect; }
 		virtual CString GetObjClassName (void) override { return CONSTLIT("CFractureEffect"); }
 		virtual CSystem::LayerEnum GetPaintLayer (void) override { return CSystem::layerEffects; }
+		virtual void MarkImages (void) override { m_Image.MarkImage(); }
 		virtual void SetAttractor (CSpaceObject *pObj) override;
 
 	protected:
@@ -967,6 +968,7 @@ class CShip : public CSpaceObject
 		void GetAttachedSectionInfo (TArray<SAttachedSectionInfo> &Result) const;
 		inline bool HasAttachedSections (void) const { return m_fHasShipCompartments; }
 		inline bool IsShipSection (void) const { return m_fShipCompartment; }
+		inline bool RepairInterior (int iRepairHP) { return m_Interior.RepairHitPoints(this, m_pClass->GetInteriorDesc(), iRepairHP); }
 		void SetAsShipSection (CShip *pMain);
 
 		//	Device methods
@@ -1214,6 +1216,7 @@ class CShip : public CSpaceObject
 		virtual bool CanFireOn (CSpaceObject *pObj) override { return CanFireOnObjHelper(pObj); }
 		virtual void GateHook (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pStargate, bool bAscend) override;
 		virtual CDesignType *GetDefaultDockScreen (CString *retsName = NULL) const override;
+		virtual CDesignType *GetDefaultOverride (void) const { return m_pClass->GetDefaultEventHandler(); }
 		virtual void ObjectDestroyedHook (const SDestroyCtx &Ctx) override;
 		virtual void OnClearCondition (CConditionSet::ETypes iCondition, DWORD dwFlags) override;
 		virtual DWORD OnCommunicate (CSpaceObject *pSender, MessageTypes iMessage, CSpaceObject *pParam1, DWORD dwParam2) override;
@@ -1349,7 +1352,7 @@ class CShip : public CSpaceObject
 		DWORD m_fHasShipCompartments:1;			//	TRUE if we have ship compartment objects attached
 		DWORD m_fAutoCreatedPorts:1;			//	TRUE if we have auto created some docking ports
 		DWORD m_fNameBlanked:1;					//	TRUE if name has been blanked; show generic name
-		DWORD m_fSpare6:1;
+		DWORD m_fShowMapLabel:1;				//	TRUE if we should show a map label
 		DWORD m_fSpare7:1;
 		DWORD m_fSpare8:1;
 
@@ -1427,8 +1430,6 @@ class CStation : public CSpaceObject
 		inline void SetShowMapLabel (bool bShow = true) { m_fNoMapLabel = !bShow; }
 		void SetStargate (const CString &sDestNode, const CString &sDestEntryPoint);
 		inline void SetStructuralHitPoints (int iHP) { m_Hull.SetStructuralHP(iHP); }
-		void SetWreckImage (CShipClass *pWreckClass);
-		void SetWreckParams (CShipClass *pWreckClass, CShip *pShip = NULL);
 
 		//	CSpaceObject virtuals
 
@@ -1513,7 +1514,7 @@ class CStation : public CSpaceObject
 		virtual bool IsStargate (void) const override { return !m_sStargateDestNode.IsBlank(); }
 		virtual bool IsVirtual (void) const override { return m_pType->IsVirtual(); }
 		virtual bool IsWreck (void) const override { return (m_dwWreckUNID != 0); }
-		virtual void MarkImages (void) override { m_pType->MarkImages(m_ImageSelector); }
+		virtual void MarkImages (void) override;
 		virtual bool ObjectInObject (const CVector &vObj1Pos, CSpaceObject *pObj2, const CVector &vObj2Pos) override;
 		virtual void OnDestroyed (SDestroyCtx &Ctx) override;
 		virtual void OnObjBounce (CSpaceObject *pObj, const CVector &vPos) override;
@@ -1535,7 +1536,7 @@ class CStation : public CSpaceObject
 		virtual void SetExplored (bool bExplored = true) override { m_fExplored = bExplored; }
 		virtual void SetIdentified (bool bIdentified = true) override { m_fKnown = bIdentified; }
 		virtual void SetKnown (bool bKnown = true) override;
-		virtual void SetMapLabelPos (int x, int y) override { m_xMapLabel = x; m_yMapLabel = y; }
+		virtual void SetMapLabelPos (CMapLabelArranger::EPositions iPos) override { m_iMapLabelPos = iPos; m_sMapLabel = NULL_STR; }
 		virtual void SetName (const CString &sName, DWORD dwFlags = 0) override;
 		virtual bool SetProperty (const CString &sName, ICCItem *pValue, CString *retsError) override;
         virtual bool ShowMapOrbit (void) const override { return (m_fShowMapOrbit ? true : false); }
@@ -1592,6 +1593,7 @@ class CStation : public CSpaceObject
 		void FinishCreation (SSystemCreateCtx *pSysCreateCtx = NULL);
 		Metric GetAttackDistance (void) const;
 		const CObjectImageArray &GetImage (bool bFade, int *retiTick = NULL, int *retiVariant = NULL) const;
+		void InitMapLabel (void);
 		bool IsBlacklisted (CSpaceObject *pObj = NULL) const;
 		void OnDestroyedByFriendlyFire (CSpaceObject *pAttacker, CSpaceObject *pOrderGiver);
 		void OnDestroyedByHostileFire (CSpaceObject *pAttacker, CSpaceObject *pOrderGiver);
@@ -1599,6 +1601,7 @@ class CStation : public CSpaceObject
 		void OnHitByHostileFire (CSpaceObject *pAttacker, CSpaceObject *pOrderGiver);
 		void RaiseAlert (CSpaceObject *pTarget);
 		void SetAngry (void);
+		void SetWreckParams (CShipClass *pWreckClass, CShip *pShip = NULL);
 		void UpdateAttacking (SUpdateCtx &Ctx, int iTick);
 		void UpdateReinforcements (int iTick);
 		void UpdateTargets (SUpdateCtx &Ctx, Metric rAttackRange);
@@ -1614,8 +1617,7 @@ class CStation : public CSpaceObject
 		CCompositeImageSelector m_ImageSelector;//	Image variant to display
 		int m_iDestroyedAnimation;				//	Frames left of destroyed animation
 		COrbit *m_pMapOrbit;					//	Orbit to draw on map
-		int m_xMapLabel;						//	Name label in map view
-		int m_yMapLabel;
+		CMapLabelArranger::EPositions m_iMapLabelPos;	//	Position of label in map/LRS view
 		Metric m_rParallaxDist;					//	Parallax distance (1.0 = normal; > 1.0 = background; < 1.0 = foreground)
 
 		CString m_sStargateDestNode;			//	Destination node
@@ -1663,6 +1665,8 @@ class CStation : public CSpaceObject
 
 		CG32bitImage m_MapImage;				//	Image for the map (if star or world)
 		CString m_sMapLabel;					//	Label for map
+		int m_xMapLabel;						//	Name label in map view (cached)
+		int m_yMapLabel;
 
 		CObjectImageArray m_StarlightImage;		//	Image rotated for proper lighting.
 

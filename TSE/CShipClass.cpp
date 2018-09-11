@@ -576,15 +576,7 @@ Metric CShipClass::CalcDamageRate (int *retiAveWeaponLevel, int *retiMaxWeaponLe
 		else
 			iDeviceCoverage = 0;
 
-		int iMinFireArc;
-		int iMaxFireArc;
-		int iWeaponCoverage;
-		if (!pWeapon->CanRotate(CItemCtx(), &iMinFireArc, &iMaxFireArc))
-			iWeaponCoverage = 0;
-		else if (iMinFireArc != iMaxFireArc)
-			iWeaponCoverage = ::AngleRange(iMinFireArc, iMaxFireArc);
-		else
-			iWeaponCoverage = 360;
+		int iWeaponCoverage = pWeapon->GetFireArc(CItemCtx());
 
 		if (bCanTrack)
 			iWeaponCoverage = Max(iWeaponCoverage, 180);
@@ -2431,7 +2423,7 @@ const CObjectImageArray &CShipClass::GetHeroImage (void)
 
     const CPlayerSettings *pPlayerSettings;
     DWORD dwImageUNID;
-	CObjectImage *pLargeImageObj;
+	TSharedPtr<CObjectImage> pLargeImageObj;
     CG32bitImage *pLargeImage;
     if (m_HeroImage.IsEmpty()
             && (pPlayerSettings = GetPlayerSettings())
@@ -2461,7 +2453,7 @@ const CObjectImageArray &CShipClass::GetHeroImage (void)
             rcImage.right = pNewImage->GetWidth();
             rcImage.bottom = pNewImage->GetHeight();
 
-            m_HeroImage.Init(pNewImage, rcImage, 1, 1, true);
+            m_HeroImage.InitFromBitmap(pNewImage, rcImage, 1, 1, true);
             }
         else
             {
@@ -2994,12 +2986,6 @@ void CShipClass::MarkImages (bool bMarkDevices)
 
 	m_Image.MarkImage();
     m_HeroImage.MarkImage();
-	m_WreckDesc.MarkImages();
-
-	//	We make sure the wreck image is created (if it is already created, then
-	//	this call just marks it.
-
-	m_WreckDesc.CreateWreckImage(GetUNID(), m_Image.GetSimpleImage());
 
 	//	If necessary mark images for all our installed devices
 
@@ -3023,6 +3009,21 @@ void CShipClass::MarkImages (bool bMarkDevices)
         pPlayerSettings->MarkImages();
 
 	DEBUG_CATCH
+	}
+
+void CShipClass::OnAccumulateStats (SStats &Stats) const
+
+//	OnAccumulateStats
+//
+//	Accumulate system stats.
+
+	{
+	size_t dwWreckMemory = m_WreckDesc.GetMemoryUsage();
+
+	Stats.dwGraphicsMemory += m_Image.GetMemoryUsage();
+	Stats.dwGraphicsMemory += dwWreckMemory;
+
+	Stats.dwWreckGraphicsMemory = dwWreckMemory;
 	}
 
 void CShipClass::OnAccumulateXMLMergeFlags (TSortMap<DWORD, DWORD> &MergeFlags) const
@@ -3367,7 +3368,6 @@ void CShipClass::OnInitFromClone (CDesignType *pSource)
 	m_DockingPorts = pClass->m_DockingPorts;
 	m_pDefaultScreen = pClass->m_pDefaultScreen;
 	m_dwDefaultBkgnd = pClass->m_dwDefaultBkgnd;
-	m_fHasDockingPorts = pClass->m_fHasDockingPorts;
 
 	if (pClass->m_pTrade)
 		{
@@ -3631,29 +3631,19 @@ ALERROR CShipClass::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (error = m_CharacterClass.LoadUNID(Ctx, pDesc->GetAttribute(CHARACTER_CLASS_ATTRIB)))
 		return error;
 
-	//	Initialize docking data
+	//	Initialize docking data. NOTE: It is OK if we have a dock screen but
+	//	no explicitly defined ports--we will create ports if necessary.
 
 	m_DockingPorts.InitPortsFromXML(NULL, pDesc, GetImageViewportSize());
-	if (m_DockingPorts.GetPortCount() > 0)
-		{
-		//	Load the default screen
 
-		m_pDefaultScreen.LoadUNID(Ctx, pDesc->GetAttribute(DOCK_SCREEN_ATTRIB));
-		if (m_pDefaultScreen.GetUNID().IsBlank())
-			return ComposeLoadError(Ctx, ERR_DOCK_SCREEN_NEEDED);
+	//	See if we have a docking screen.
 
-		//	Background screens
+	m_pDefaultScreen.LoadUNID(Ctx, pDesc->GetAttribute(DOCK_SCREEN_ATTRIB));
 
-		if (error = LoadUNID(Ctx, pDesc->GetAttribute(DEFAULT_BACKGROUND_ID_ATTRIB), &m_dwDefaultBkgnd))
-			return error;
+	//	Background screens
 
-		m_fHasDockingPorts = true;
-		}
-	else
-		{
-		m_dwDefaultBkgnd = 0;
-		m_fHasDockingPorts = false;
-		}
+	if (error = LoadUNID(Ctx, pDesc->GetAttribute(DEFAULT_BACKGROUND_ID_ATTRIB), &m_dwDefaultBkgnd))
+		return error;
 
 	//	Load trade
 

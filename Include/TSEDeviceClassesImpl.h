@@ -349,9 +349,13 @@ class CRepairerClass : public CDeviceClass
 		CRepairerClass (void);
 
 		void CalcRegen (CInstalledDevice *pDevice, CShip *pShip, int iSegment, int iTick, int *retiHP, int *retiPower);
+		bool RepairShipArmor (CInstalledDevice *pDevice, CShip *pShip, SDeviceUpdateCtx &Ctx);
+		bool RepairShipAttachedSections (CInstalledDevice *pDevice, CShip *pShip, SDeviceUpdateCtx &Ctx);
+		bool RepairShipInterior (CInstalledDevice *pDevice, CShip *pShip, SDeviceUpdateCtx &Ctx);
 
 		TArray<CRegenDesc> m_Repair;			//	Repair descriptor (by level)
-		int m_iPowerUse;						//	Power used for each hp of repair
+		CRegenDesc m_CompartmentRepair;			//	Repair compartments
+		int m_iPowerUse;						//	Power used while repairing
 
 		SEventHandlerDesc m_CachedEvents[evtCount];		//	Cached events
 	};
@@ -633,7 +637,6 @@ class CWeaponClass : public CDeviceClass
 		virtual CWeaponClass *AsWeaponClass (void) override { return this; }
 		virtual int CalcFireSolution (CInstalledDevice *pDevice, CSpaceObject *pSource, CSpaceObject *pTarget) override;
 		virtual int CalcPowerUsed (SUpdateCtx &Ctx, CInstalledDevice *pDevice, CSpaceObject *pSource) override;
-		virtual bool CanRotate (CItemCtx &Ctx, int *retiMinFireArc = NULL, int *retiMaxFireArc = NULL) const override;
         virtual ICCItem *FindAmmoItemProperty (CItemCtx &Ctx, const CItem &Ammo, const CString &sProperty) override;
 		virtual int GetActivateDelay (CInstalledDevice *pDevice, CSpaceObject *pSource) const override;
 		virtual int GetAmmoVariant (const CItemType *pItem) const override;
@@ -652,6 +655,7 @@ class CWeaponClass : public CDeviceClass
 		virtual Metric GetMaxRange (CItemCtx &ItemCtx) override;
 		virtual int GetPowerRating (CItemCtx &Ctx) const override;
 		virtual bool GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, DamageTypes *retiDamage, CString *retsReference) const override;
+		virtual DeviceRotationTypes GetRotationType (CItemCtx &Ctx, int *retiMinArc = NULL, int *retiMaxArc = NULL) const override;
 		virtual void GetSelectedVariantInfo (CSpaceObject *pSource, 
 											 CInstalledDevice *pDevice,
 											 CString *retsLabel,
@@ -739,7 +743,6 @@ class CWeaponClass : public CDeviceClass
 		Metric CalcDamagePerShot (CWeaponFireDesc *pShot, const CItemEnhancementStack *pEnhancements = NULL, DWORD dwDamageFlags = 0) const;
 		int CalcFireAngle (CItemCtx &ItemCtx, Metric rSpeed, CSpaceObject *pTarget, bool *retbOutOfArc);
         int CalcLevel (CWeaponFireDesc *pShot) const;
-        int CalcRotateRange (CItemCtx &ItemCtx) const;
 		bool ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int iRepeatingCount, bool *retbConsumed);
 		bool ConsumeCapacitor (CItemCtx &ItemCtx, CWeaponFireDesc *pShot);
 		void FailureExplosion (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, bool *retbSourceDestroyed);
@@ -766,10 +769,8 @@ class CWeaponClass : public CDeviceClass
 		ALERROR InitVariantsFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CItemType *pType);
 		inline bool IsCapacitorEnabled (void) { return (m_Counter == cntCapacitor); }
 		inline bool IsCounterEnabled (void) { return (m_Counter != cntNone); }
-		bool IsDirectional (CInstalledDevice *pDevice, int *retiMinFireArc = NULL, int *retiMaxFireArc = NULL);
 		inline bool IsLauncher (void) const { return (m_iVariantType == varLauncher); }
 		inline bool IsLauncherWithAmmo (void) const { return (IsLauncher() && m_ShotData[0].pDesc->GetAmmoType() != NULL); }
-		bool IsOmniDirectional (CInstalledDevice *pDevice);
 		inline bool IsTemperatureEnabled (void) { return (m_Counter == cntTemperature); }
 		bool IsTracking (CItemCtx &ItemCtx, CWeaponFireDesc *pShot) const;
 		bool UpdateTemperature (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, CFailureDesc::EFailureTypes *retiFailureMode, bool *retbSourceDestroyed);

@@ -56,6 +56,7 @@ static CObjectClass<CSpaceObject>g_Class(OBJID_CSPACEOBJECT);
 #define ON_DESTROY_EVENT						CONSTLIT("OnDestroy")
 #define ON_DESTROY_OBJ_EVENT					CONSTLIT("OnDestroyObj")
 #define ON_DOCK_OBJ_ADJ_EVENT					CONSTLIT("OnDockObjAdj")
+#define ON_DOCK_OBJ_DESTROYED_EVENT				CONSTLIT("OnDockObjDestroyed")
 #define ON_ENTERED_GATE_EVENT					CONSTLIT("OnEnteredGate")
 #define ON_ENTERED_SYSTEM_EVENT					CONSTLIT("OnEnteredSystem")
 #define ON_LOAD_EVENT							CONSTLIT("OnLoad")
@@ -2611,6 +2612,32 @@ bool CSpaceObject::FireOnDockObjAdj (CSpaceObject **retpObj)
 	return false;
 	}
 
+void CSpaceObject::FireOnDockObjDestroyed (CSpaceObject *pDockTarget, const SDestroyCtx &Ctx)
+
+//	FireOnDockObjDestroyed
+//
+//	Fire event when a object that we are docked with (or in the process of 
+//	docking with) got destroyed.
+
+	{
+	SEventHandlerDesc Event;
+	if (!FindEventHandler(ON_DOCK_OBJ_DESTROYED_EVENT, &Event))
+		return;
+
+	CCodeChainCtx CCCtx;
+	CCCtx.DefineContainingType(this);
+	CCCtx.SaveAndDefineSourceVar(this);
+	CCCtx.DefineSpaceObject(CONSTLIT("aObjDestroyed"), Ctx.pObj);
+	CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
+	CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
+	CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+	CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
+
+	ICCItemPtr pResult = CCCtx.RunCode(Event);
+	if (pResult->IsError())
+		ReportEventError(ON_DOCK_OBJ_DESTROYED_EVENT, pResult);
+	}
+
 void CSpaceObject::FireOnEnteredGate (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGate)
 
 //	FireOnEnteredGate
@@ -4853,13 +4880,20 @@ bool CSpaceObject::HasDockScreen (void) const
 	if (FireGetDockScreen())
 		return true;
 
-	if (g_pUniverse->GetDesignCollection().FireGetGlobalDockScreen(const_cast<CSpaceObject *>(this)))
-		return true;
-
 	const COverlayList *pOverlays;
 	if ((pOverlays = GetOverlays()) 
 			&& pOverlays->FireGetDockScreen(const_cast<CSpaceObject *>(this)))
 		return true;
+
+	//	NOTE: We do not consider <GetGlobalDockScreen> for purposes of whether 
+	//	we have a dock screen or not. This is for two reasons:
+	//
+	//	1.	<GetGlobalDockScreen> is generally used to override a dock screen
+	//		(not to add one to an object that doesn't have one).
+	//
+	//	2.	If we were to consider it, then all (e.g.,) Commonwealth ships 
+	//		would have docking ports because we create docking ports on ships
+	//		if we have a screen.
 
 	return false;
 	}
@@ -6155,6 +6189,12 @@ void CSpaceObject::NotifyOnObjDestroyed (SDestroyCtx &Ctx)
 
 	{
 	m_SubscribedObjs.NotifyOnObjDestroyed(Ctx);
+
+	//	Notify any docked objects that their dock target got destroyed.
+
+	CDockingPorts *pPorts = GetDockingPorts();
+	if (pPorts)
+		pPorts->OnDockObjDestroyed(this, Ctx);
 	}
 
 void CSpaceObject::NotifyOnObjDocked (CSpaceObject *pDockTarget)
@@ -6340,6 +6380,16 @@ void CSpaceObject::Paint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &C
 					&cyHeight);
 
 			Ctx.yAnnotations += cyHeight + ANNOTATION_INNER_SPACING_Y;
+			}
+
+		//	Show bounds
+
+		if (Ctx.bShowBounds)
+			{
+			CG32bitPixel rgbColor = GetSymbolColor();
+			int xHalf = mathRound(m_rBoundsX / g_KlicksPerPixel);
+			int yHalf = mathRound(m_rBoundsY / g_KlicksPerPixel);
+			CGDraw::RectOutline(Dest, x - xHalf, y - yHalf, 2 * xHalf, 2 * yHalf,rgbColor);
 			}
 
 		//	Let the object paint additional annotations
@@ -7190,6 +7240,16 @@ void CSpaceObject::SetOverride (CDesignType *pOverride)
 //	Sets the override.
 	
 	{
+	//	NULL means go back to the default event handler (which could be NULL).
+
+	if (pOverride == NULL)
+		pOverride = GetDefaultOverride();
+
+	//	Short-circuit if no change
+
+	if (pOverride == m_pOverride)
+		return;
+
 	//	Let the previous event handler terminate
 
 	if (m_pOverride)

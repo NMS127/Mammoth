@@ -255,7 +255,8 @@ ICCItem *fnObjIDGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData);
 #define FN_OBJ_ENUM_ITEMS			3
 #define FN_OBJ_HAS_ITEM				4
 
-ICCItem *fnObjItem (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
+ICCItem *fnObjItem (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData);
+ICCItem *fnObjItemOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData);
 
 #define FN_OBJ_ARMOR_DAMAGE			2
 #define FN_OBJ_REPAIR_ARMOR			3
@@ -636,6 +637,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"property:\n\n"
 			
 			"   'debugMode\n"
+			"   'showBounds\n"
 			"   'showLineOfFire\n"
 			"   'showNavPaths\n",
 
@@ -658,6 +660,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			
 			"property:\n\n"
 			
+			"   'showBounds True/Nil\n"
 			"   'showLineOfFire True/Nil\n"
 			"   'showNavPaths True/Nil\n",
 
@@ -1710,7 +1713,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 
 			"ivs",	0,	},
 
-		{	"objGetItems",					fnObjItem,		FN_OBJ_ENUM_ITEMS,
+		{	"objGetItems",					fnObjItemOld,		FN_OBJ_ENUM_ITEMS,
 			"(objGetItems obj criteria) -> list of items\n\n"
 
 			"criteria as itmGetTypes plus\n\n"
@@ -1895,6 +1898,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'selectedMissile\n"
 			"   'selectedWeapon\n"
 			"   'shatterImmune\n"
+			"   'showMapLabel\n"
 			"   'thrust -> in GN\n"
 			"   'thrustToWeight -> acceleration, 1 = 500 m/s^2 (ships stats show this / 1000)\n"
 			"\n"
@@ -1995,8 +1999,17 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			NULL,	0,	},
 
 		{	"objHasItem",					fnObjItem,		FN_OBJ_HAS_ITEM,
-			"(objHasItem obj item [count]) -> number of items (or Nil)",
-			NULL,	0,	},
+			"(objHasItem obj item [count] [options]) -> number of items (or Nil)\n\n"
+			
+			"options:\n\n"
+			
+			"   'ignoreCharges\n"
+			"   'ignoreData\n"
+			"   'ignoreDisruption\n"
+			"   'ignoreEnhancements\n"
+			"   'ignoreInstalled\n",
+
+			"iv*",	0,	},
 
 		{	"objHasTradeService",			fnObjGet,		FN_OBJ_HAS_SERVICE,
 			"(objHasTradeService obj service) -> True/Nil",
@@ -2084,8 +2097,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"ii",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"objRemoveItem",				fnObjItem,		FN_OBJ_REMOVE_ITEM,
-			"(objRemoveItem obj item [count]) -> True/Nil",
-			NULL,	PPFLAG_SIDEEFFECTS,	},
+			"(objRemoveItem obj item [count] [options]) -> True/Nil",
+			"iv*",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"objRemoveItemEnhancement",		fnObjSet,		FN_OBJ_REMOVE_ITEM_ENHANCEMENT,
 			"(objRemoveItemEnhancement obj item enhancementID) -> True/Nil",
@@ -2220,6 +2233,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'rotation angle\n"
 			"   'selectedMissile type|item\n"
 			"   'selectedWeapon type|item\n"
+			"   'showMapLabel True|Nil\n"
 			"   'sovereign type\n"
 			"\n"
 			"property (stations)\n\n"
@@ -2239,6 +2253,7 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'playerBlacklisted True|Nil\n"
 			"   'shipConstructionEnabled True|Nil\n"
 			"   'shipReinforcementEnabled True|Nil\n"
+			"   'showMapLabel True|Nil\n"
 			"   'sovereign type\n"
 			"   'structuralHP hitPoints",
 
@@ -2505,18 +2520,18 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 		//	----------------
 
 		{	"sysAddEncounterEvent",			fnSystemAddEncounterEvent,	FN_ADD_ENCOUNTER_FROM_GATE,
-			"(sysAddEncounterEvent delay target encounterID gate)\n\n"
+			"(sysAddEncounterEvent delay target encounterID gateObj|pos)\n\n"
 
 			"delay in ticks",
 
-			NULL,	PPFLAG_SIDEEFFECTS,	},
+			"iiiv",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"sysAddEncounterEventAtDist",	fnSystemAddEncounterEvent,	FN_ADD_ENCOUNTER_FROM_DIST,
 			"(sysAddEncounterEventAtDist delay target encounterID distance)\n\n"
 
 			"delay in ticks",
 
-			NULL,	PPFLAG_SIDEEFFECTS,	},
+			"iiii",	PPFLAG_SIDEEFFECTS,	},
 
 		{	"sysAddObjTimerEvent",			fnSystemAddStationTimerEvent,	FN_ADD_TIMER_NORMAL,	
 			"(sysAddObjTimerEvent delay obj event)\n\n"
@@ -2794,6 +2809,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			
 			"property:\n\n"
 			
+			"   'lastVisitOn       Tick on which player last visited\n"
+			"   'lastVisitSeconds  Game seconds since player last visited\n"
 			"   'level             The level of the system\n"
 			"   'name              The name of the system\n"
 			"   'pos               Node position on map (x y)",
@@ -3279,7 +3296,8 @@ static PRIMITIVEPROCDEF g_Extensions[] =
 			"   'extension        UNID of extension where type is defined\n"
 			"   'mapDescription   Type description used for map labels\n"
 			"   'merged           True if type inherits from another type\n"
-			"   'namePattern\n\n"
+			"   'namePattern\n"
+			"   'obsoleteVersion  Type is obsolete at this API version\n\n"
 
 			"property (sovereign):\n\n"
 
@@ -4364,8 +4382,11 @@ ICCItem *fnDesignGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Get parameters
 
 			int iArg = 1;
-			CString sText = pArgs->GetElement(iArg++)->GetStringValue();
+			ICCItem *pText = pArgs->GetElement(iArg++);
+			if (pText->IsNil())
+				return pCC->CreateNil();
 
+			CString sText = pText->GetStringValue();
 			ICCItem *pData = NULL;
 			if (pArgs->GetCount() > iArg)
 				{
@@ -6948,8 +6969,11 @@ ICCItem *fnObjGet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Get parameters
 
 			int iArg = 1;
-			CString sText = pArgs->GetElement(iArg++)->GetStringValue();
+			ICCItem *pText = pArgs->GetElement(iArg++);
+			if (pText->IsNil())
+				return pCC->CreateNil();
 
+			CString sText = pText->GetStringValue();
 			ICCItem *pData = NULL;
 			if (pArgs->GetCount() > iArg)
 				{
@@ -7265,10 +7289,13 @@ ICCItem *fnObjSendMessage (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 			//	Second param is the sender; third is message ID
 
 			CSpaceObject *pSender = CreateObjFromItem(*pCC, pArgs->GetElement(1));
-			CString sMessageID = pArgs->GetElement(2)->GetStringValue();
+			ICCItem *pMessageID = pArgs->GetElement(2);
+			if (pMessageID->IsNil())
+				return pCC->CreateNil();
 
 			//	If no message, nothing to do
 
+			CString sMessageID = pMessageID->GetStringValue();
 			if (sMessageID.IsBlank())
 				return pCC->CreateNil();
 
@@ -8288,6 +8315,8 @@ ICCItem *fnObjSet (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 		case FN_OBJ_SET_EVENT_HANDLER:
 			if (pArgs->GetElement(1)->IsNil())
+				//	NOTE: This will set it back to the default handler from the class
+				//	(if any).
 				pObj->SetOverride(NULL);
 			else
 				{
@@ -8553,14 +8582,109 @@ ICCItem *fnObjSetOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 	return pResult;
 	}
 
-ICCItem *fnObjItem (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
+ICCItem *fnObjItem (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 //	fnObjItem
 //
 //	Gets and sets items
+
+	{
+	CCodeChain *pCC = pEvalCtx->pCC;
+
+	//	Convert the first argument into a space object
+
+	CSpaceObject *pObj = CreateObjFromItem(*pCC, pArgs->GetElement(0));
+	if (pObj == NULL)
+		return pCC->CreateNil();
+
+	//	Second argument is an item
+
+	CItem Item(CreateItemFromList(*pCC, pArgs->GetElement(1)));
+	if (Item.IsEmpty())
+		return pCC->CreateNil();
+
+	//	Do command
+
+	switch (dwData)
+		{
+		case FN_OBJ_HAS_ITEM:
+			{
+			//	We have two optional arguments: a count and options.
+
+			int iCount = Item.GetCount();
+			ICCItem *pOptions = NULL;
+
+			int iArg = 2;
+			if (pArgs->GetCount() > iArg && pArgs->GetElement(iArg)->IsNumber())
+				iCount = pArgs->GetElement(iArg++)->GetIntegerValue();
+
+			if (pArgs->GetCount() > iArg)
+				pOptions = pArgs->GetElement(iArg++);
+
+			//	Generate flags
+
+			DWORD dwFlags = CItem::ParseFlags(pOptions);
+
+			//	Find
+
+			CItemListManipulator ObjList(pObj->GetItemList());
+			if (!ObjList.SetCursorAtItem(Item, dwFlags))
+				return pCC->CreateNil();
+
+			if (ObjList.GetItemAtCursor().GetCount() < iCount)
+				return pCC->CreateNil();
+
+			return pCC->CreateInteger(ObjList.GetItemAtCursor().GetCount());
+			}
+
+		case FN_OBJ_REMOVE_ITEM:
+			{
+			//	We have two optional arguments: a count and options.
+
+			int iCount = Item.GetCount();
+			ICCItem *pOptions = NULL;
+
+			int iArg = 2;
+			if (pArgs->GetCount() > iArg && pArgs->GetElement(iArg)->IsNumber())
+				iCount = pArgs->GetElement(iArg++)->GetIntegerValue();
+
+			if (pArgs->GetCount() > iArg)
+				pOptions = pArgs->GetElement(iArg++);
+
+			//	Generate flags
+
+			DWORD dwFlags = CItem::ParseFlags(pOptions);
+
+			//	Remove
+
+			CItemListManipulator ObjList(pObj->GetItemList());
+			if (!ObjList.SetCursorAtItem(Item, dwFlags))
+				return pCC->CreateNil();
+
+			if (ObjList.GetItemAtCursor().IsInstalled())
+				return pCC->CreateError(CONSTLIT("Installed items cannot be removed; use (shpRemoveDevice) instead"));
+
+			ObjList.DeleteAtCursor(iCount);
+
+			pObj->OnComponentChanged(comCargo);
+			pObj->ItemsModified();
+			pObj->InvalidateItemListAddRemove();
+			return pCC->CreateTrue();
+			}
+
+		default:
+			ASSERT(false);
+			return pCC->CreateNil();
+		}
+	}
+
+ICCItem *fnObjItemOld (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
+
+//	fnObjItemOld
+//
+//	Gets and sets items
 //
 //	(objAddItem obj item)
-//	(objHasItem obj item [count])
 //	(objRemoveItem obj item [count])
 
 	{
@@ -8590,25 +8714,6 @@ ICCItem *fnObjItem (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
 
 	switch (dwData)
 		{
-		case FN_OBJ_HAS_ITEM:
-			{
-			CItem Item(CreateItemFromList(*pCC, pArgs->GetElement(1)));
-			int iCount = Item.GetCount();
-			if (pArgs->GetElement(2))
-				iCount = pArgs->GetElement(2)->GetIntegerValue();
-			pArgs->Discard(pCC);
-
-			CItemListManipulator ObjList(pObj->GetItemList());
-			if (!ObjList.SetCursorAtItem(Item))
-				return pCC->CreateNil();
-
-			if (ObjList.GetItemAtCursor().GetCount() < iCount)
-				return pCC->CreateNil();
-
-			pResult = pCC->CreateInteger(ObjList.GetItemAtCursor().GetCount());
-			break;
-			}
-
 		case FN_OBJ_REMOVE_ITEM:
 			{
 			CItem Item(CreateItemFromList(*pCC, pArgs->GetElement(1)));
@@ -10971,7 +11076,7 @@ ICCItem *fnStationType (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 	return pResult;
 	}
 
-ICCItem *fnSystemAddEncounterEvent (CEvalContext *pEvalCtx, ICCItem *pArguments, DWORD dwData)
+ICCItem *fnSystemAddEncounterEvent (CEvalContext *pEvalCtx, ICCItem *pArgs, DWORD dwData)
 
 //	fnSystemAddEncounterEvent
 //
@@ -10979,23 +11084,13 @@ ICCItem *fnSystemAddEncounterEvent (CEvalContext *pEvalCtx, ICCItem *pArguments,
 
 	{
 	CCodeChain *pCC = pEvalCtx->pCC;
-	ICCItem *pArgs;
-
-	//	Evaluate the arguments and validate them
-
-	pArgs = pCC->EvaluateArgs(pEvalCtx, pArguments, CONSTLIT("iiii"));
-	if (pArgs->IsError())
-		return pArgs;
 
 	//	Arguments
 
 	int iTime = pArgs->GetElement(0)->GetIntegerValue();
 	CSpaceObject *pTarget = CreateObjFromItem(*pCC, pArgs->GetElement(1));
 	if (pTarget == NULL)
-		{
-		pArgs->Discard(pCC);
 		return pCC->CreateNil();
-		}
 
 	DWORD dwEncounterID = (DWORD)pArgs->GetElement(2)->GetIntegerValue();
 
@@ -11003,14 +11098,16 @@ ICCItem *fnSystemAddEncounterEvent (CEvalContext *pEvalCtx, ICCItem *pArguments,
 
 	int iDistance = 0;
 	CSpaceObject *pGate = NULL;
+	CVector vPos;
 
 	if (dwData == FN_ADD_ENCOUNTER_FROM_DIST)
 		iDistance =	pArgs->GetElement(3)->GetIntegerValue();
 	else
-		pGate = CreateObjFromItem(*pCC, pArgs->GetElement(3));
+		{
+		if (::GetPosOrObject(pEvalCtx, pArgs->GetElement(3), &vPos, &pGate) != NOERROR)
+			return pCC->CreateError(CONSTLIT("Invalid pos"), pArgs->GetElement(3));
+		}
 	
-	pArgs->Discard(pCC);
-
 	//	Create the event
 
 	CSystem *pSystem = g_pUniverse->GetCurrentSystem();
@@ -11022,6 +11119,7 @@ ICCItem *fnSystemAddEncounterEvent (CEvalContext *pEvalCtx, ICCItem *pArguments,
 			pTarget,
 			dwEncounterID,
 			pGate,
+			vPos,
 			iDistance * LIGHT_SECOND);
 
 	pSystem->AddTimedEvent(pEvent);

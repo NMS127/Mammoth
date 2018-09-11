@@ -56,6 +56,8 @@ enum ItemEnhancementTypes
 												//		X = %bonus (if disadvantage, this is decrease)
 	etTracking =						0x1800,	//	weapon gains tracking
 												//		X = maneuver rate
+	etOmnidirectional =					0x1900,	//	weapon gain omnidirectional
+												//		X = 0: omni; >0 <360 : swivel
 
 	etData1Mask =						0x000f,	//	4-bits of data (generally for damage adj)
 	etData2Mask =						0x00f0,	//	4-bits of data (generally for damage type)
@@ -117,6 +119,7 @@ class CItemEnhancement
 		int GetEnhancedRate (int iRate) const;
 		inline CItemType *GetEnhancementType (void) const { return m_pEnhancer; }
 		inline int GetExpireTime (void) const { return m_iExpireTime; }
+		int GetFireArc (void) const;
 		int GetHPAdj (void) const;
 		int GetHPBonus (void) const;
 		inline DWORD GetID (void) const { return m_dwID; }
@@ -163,6 +166,8 @@ class CItemEnhancement
 		void SetModBonus (int iBonus);
 		inline void SetModCode (DWORD dwMods) { m_dwMods = dwMods; }
 		inline void SetModImmunity (SpecialDamageTypes iSpecial) { m_dwMods = Encode12(etSpecialDamage, 0, (int)iSpecial); }
+		inline void SetModEfficiency (int iAdj) { m_dwMods = (iAdj > 0 ? EncodeABC(etPowerEfficiency, iAdj) : EncodeABC(etPowerEfficiency | etDisadvantage, -iAdj)); }
+		inline void SetModOmnidirectional (int iFireArc) { m_dwMods = EncodeAX(etOmnidirectional, 0, Max(0, iFireArc)); }
 		inline void SetModReflect (DamageTypes iDamageType) { m_dwMods = Encode12(etReflect, 0, (int)iDamageType); }
 		inline void SetModResistDamage (DamageTypes iDamageType, int iAdj) { m_dwMods = Encode12(etResistByDamage | (iAdj > 100 ? etDisadvantage : 0), DamageAdj2Level(iAdj), (int)iDamageType); }
 		inline void SetModResistDamageClass (DamageTypes iDamageType, int iAdj) { m_dwMods = Encode12(etResistByDamage2 | (iAdj > 100 ? etDisadvantage : 0), DamageAdj2Level(iAdj), (int)iDamageType); }
@@ -224,6 +229,7 @@ class CItemEnhancementStack
 		inline int GetCount (void) const { return m_Stack.GetCount(); }
 		const DamageDesc &GetDamage (void) const;
 		int GetDamageAdj (const DamageDesc &Damage) const;
+		int GetFireArc (void) const;
 		int GetManeuverRate (void) const;
 		int GetPowerAdj (void) const;
 		int GetResistDamageAdj (DamageTypes iDamage) const;
@@ -292,6 +298,9 @@ class CItem
 
 			FLAG_IGNORE_INSTALLED =			0x00000001,
 			FLAG_IGNORE_CHARGES =			0x00000002,
+			FLAG_IGNORE_DATA =				0x00000004,
+			FLAG_IGNORE_DISRUPTED =			0x00000008,
+			FLAG_IGNORE_ENHANCEMENTS =		0x00000010,
 			};
 
 		CItem (void);
@@ -388,6 +397,7 @@ class CItem
 		static void InitCriteriaAll (CItemCriteria *retCriteria);
 		static const CItem &NullItem (void) { return CItem::m_NullItem; }
 		static void ParseCriteria (const CString &sCriteria, CItemCriteria *retCriteria);
+		static DWORD ParseFlags (ICCItem *pItem);
 		bool MatchesCriteria (const CItemCriteria &Criteria) const;
 
 		void ReadFromStream (SLoadCtx &Ctx);

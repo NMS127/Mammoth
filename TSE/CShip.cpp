@@ -90,6 +90,7 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_SELECTED_MISSILE				CONSTLIT("selectedMissile")
 #define PROPERTY_SELECTED_WEAPON				CONSTLIT("selectedWeapon")
 #define PROPERTY_SHATTER_IMMUNE					CONSTLIT("shatterImmune")
+#define PROPERTY_SHOW_MAP_LABEL					CONSTLIT("showMapLabel")
 #define PROPERTY_THRUST							CONSTLIT("thrust")
 #define PROPERTY_THRUST_TO_WEIGHT				CONSTLIT("thrustToWeight")
 
@@ -785,6 +786,11 @@ CSpaceObject::InstallItemResults CShip::CalcDeviceToReplace (const CItem &Item, 
 					iThisType = 1;
 
 				int iThisLevel = pDevice->GetLevel();
+
+				//	We never recommend replacing the same item
+
+				if (pDevice->GetClass() == Item.GetType()->GetDeviceClass())
+					continue;
 
 				//	See if uninstalling this device would be enough; if not, then
 				//	don't bother.
@@ -1544,6 +1550,7 @@ ALERROR CShip::CreateFromClass (CSystem *pSystem,
 	pShip->m_fHasShipCompartments = false;
 	pShip->m_fAutoCreatedPorts = false;
 	pShip->m_fNameBlanked = false;
+	pShip->m_fShowMapLabel = pClass->ShowsMapLabel();
 
 	//	Shouldn't be able to hit a virtual ship
 
@@ -1669,14 +1676,11 @@ ALERROR CShip::CreateFromClass (CSystem *pSystem,
 
 	pShip->m_Interior.CreateAttached(pShip, pClass->GetInteriorDesc());
 
-	//	Set override, just before creation. Get the override from the class, if
-	//	necessary.
-
-	if (pOverride == NULL)
-		pOverride = pClass->GetDefaultEventHandler();
-
 	//	NOTE: We need to call SetOverride even if we have NULL for a handler 
 	//	because it also sets event flags (SetEventFlags).
+	//
+	//	NOTE: Inside the call to SetOverride we set it to the default handler
+	//	from the class (if pOverride is NULL).
 
 	pShip->SetOverride(pOverride);
 
@@ -1808,32 +1812,22 @@ int CShip::DamageArmor (int iSect, DamageDesc &Damage)
 //	Damage armor. Returns the number of hits points of damage caused.
 
 	{
+	SDamageCtx DamageCtx(Damage);
 	CInstalledArmor *pArmor = GetArmorSection(iSect);
-	CItemCtx ItemCtx(this, pArmor);
-
-	SDamageCtx DamageCtx;
-	DamageCtx.Damage = Damage;
-	DamageCtx.iDamage = Damage.RollDamage();
-
-	//	Adjust the damage for the armor
-
-	pArmor->GetClass()->CalcAdjustedDamage(ItemCtx, DamageCtx);
-	if (DamageCtx.iDamage == 0)
-		return 0;
 
 	//	Armor takes damage
 
-	int iDamage = Min(DamageCtx.iDamage, pArmor->GetHitPoints());
-	if (iDamage == 0)
+	EDamageResults iResult = pArmor->AbsorbDamage(this, DamageCtx);
+	if (iResult == damageNoDamage || DamageCtx.iArmorDamage == 0)
 		return 0;
-
-	pArmor->IncHitPoints(-iDamage);
 
 	//	Tell the controller that we were damaged
 
-	m_pController->OnDamaged(CDamageSource(), pArmor, Damage, iDamage);
+	m_pController->OnDamaged(CDamageSource(), pArmor, Damage, DamageCtx.iArmorDamage);
 
-	return iDamage;
+	//	Return damage caused
+
+	return DamageCtx.iArmorDamage;
 	}
 
 void CShip::DamageExternalDevice (int iDev, SDamageCtx &Ctx)
@@ -3212,6 +3206,9 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 	else if (strEquals(sName, PROPERTY_SHATTER_IMMUNE))
 		return CC.CreateBool(m_Armor.IsImmune(this, specialShatter));
 
+	else if (strEquals(sName, PROPERTY_SHOW_MAP_LABEL))
+		return CC.CreateBool(m_fShowMapLabel);
+
 	//	Drive properties
 
 	else if (strEquals(sName, PROPERTY_DRIVE_POWER))
@@ -4008,8 +4005,7 @@ void CShip::ObjectDestroyedHook (const SDestroyCtx &Ctx)
 	//	If this object is docked with us, remove it from the
 	//	docking table.
 
-	if (m_pClass->HasDockingPorts())
-		m_DockingPorts.OnObjDestroyed(this, Ctx.pObj);
+	m_DockingPorts.OnObjDestroyed(this, Ctx.pObj);
 
 	//	If our exit gate got destroyed, then we're OK (this can happen if
 	//	a carrier gets destroyed while gunships are being launched)
@@ -4067,6 +4063,9 @@ void CShip::OnAscended (void)
 	{
 	//	Kill any event handlers (these are often used to provide behavior in
 	//	a specific system).
+	//
+	//	NOTE: This will restore it back to the default handler from the class,
+	//	if defined.
 
 	SetOverride(NULL);
 
@@ -4651,8 +4650,7 @@ void CShip::OnDestroyed (SDestroyCtx &Ctx)
 
 	//	Release any docking objects
 
-	if (m_pClass->HasDockingPorts())
-		m_DockingPorts.OnDestroyed();
+	m_DockingPorts.OnDestroyed();
 
 	//	Create an effect appropriate to the cause of death
 
@@ -4956,8 +4954,7 @@ void CShip::OnMove (const CVector &vOldPos, Metric rSeconds)
 	//	If the station is moving then make sure all docked ships
 	//	move along with it.
 
-	if (m_pClass->HasDockingPorts())
-		m_DockingPorts.MoveAll(this);
+	m_DockingPorts.MoveAll(this);
 
 	//	Move effects
 
@@ -5207,7 +5204,7 @@ void CShip::OnPaintMap (CMapViewportCtx &Ctx, CG32bitImage &Dest, int x, int y)
 
 	//	Or if it has docking services and the player knows about it
 
-	else if (m_fKnown && m_pClass->HasDockingPorts())
+	else if (m_fKnown && m_fShowMapLabel)
 		{
 		CG32bitPixel rgbColor;
 		if (IsEnemy(GetUniverse()->GetPOV()))
@@ -5449,7 +5446,10 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 	m_fNameBlanked =			((dwLoad & 0x00000020) ? true : false) && (Ctx.dwVersion >= 155);
 	bool bTrackFuel =			((dwLoad & 0x00000040) ? true : false);
 	bool bHasMoney =			((dwLoad & 0x00000080) ? true : false) && (Ctx.dwVersion >= 145);
-	//	0x00000100 Unused as of version 155
+	if (Ctx.dwVersion >= 163)
+		m_fShowMapLabel =		((dwLoad & 0x00000100) ? true : false);
+	else
+		m_fShowMapLabel = m_pClass->ShowsMapLabel();
 	m_fRecalcItemMass =			((dwLoad & 0x00000200) ? true : false);
 	m_fKnown =					((dwLoad & 0x00000400) ? true : false);
 	m_fHiddenByNebula =			((dwLoad & 0x00000800) ? true : false);
@@ -6430,7 +6430,7 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 	dwSave |= (m_fNameBlanked ?			0x00000020 : 0);
 	dwSave |= (m_pPowerUse ?			0x00000040 : 0);
 	dwSave |= (m_pMoney ?				0x00000080 : 0);
-	//	0x00000100
+	dwSave |= (m_fShowMapLabel ?		0x00000100 : 0);
 	dwSave |= (m_fRecalcItemMass ?		0x00000200 : 0);
 	dwSave |= (m_fKnown ?				0x00000400 : 0);
 	dwSave |= (m_fHiddenByNebula ?		0x00000800 : 0);
@@ -6554,7 +6554,7 @@ void CShip::PaintLRSBackground (CG32bitImage &Dest, int x, int y, const Viewport
 	if (IsHidden())
 		return;
 
-	if (m_fKnown && m_pClass->HasDockingPorts())
+	if (m_fKnown && m_fShowMapLabel)
 		{
 		if (m_sMapLabel.IsBlank())
 			m_sMapLabel = GetNounPhrase(nounTitleCapitalize);
@@ -7757,6 +7757,11 @@ bool CShip::SetProperty (const CString &sName, ICCItem *pValue, CString *retsErr
 			}
 
 		SelectWeapon(iDev, 0);
+		return true;
+		}
+	else if (strEquals(sName, PROPERTY_SHOW_MAP_LABEL))
+		{
+		m_fShowMapLabel = !pValue->IsNil();
 		return true;
 		}
 	else

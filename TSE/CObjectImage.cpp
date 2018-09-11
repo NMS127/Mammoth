@@ -152,7 +152,7 @@ bool CObjectImage::FindDataField (const CString &sField, CString *retsValue) con
 				pImage->GetHeight());
 		}
 	else
-		return false;
+		return CDesignType::FindDataField(sField, retsValue);
 
 	return true;
 	}
@@ -180,6 +180,30 @@ CG32bitImage *CObjectImage::GetHitMask (void)
 		return NULL;
 
 	return m_pHitMask;
+	}
+
+size_t CObjectImage::GetMemoryUsage (void) const
+
+//	GetMemoryUsage
+//
+//	Returns the amount of memory used by bitmaps.
+
+	{
+	size_t dwTotal = 0;
+
+	if (m_bFreeBitmap)
+		{
+		if (m_pBitmap)
+			dwTotal += m_pBitmap->GetMemoryUsage();
+
+		if (m_pHitMask)
+			dwTotal += m_pHitMask->GetMemoryUsage();
+
+		if (m_pShadowMask)
+			dwTotal += m_pShadowMask->GetMemoryUsage();
+		}
+
+	return dwTotal;
 	}
 
 CG32bitImage *CObjectImage::GetRawImage (const CString &sLoadReason, CString *retsError) const

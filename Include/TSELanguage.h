@@ -96,6 +96,7 @@ class CLanguage
 		static CString ComposeNumber (ENumberFormatTypes iFormat, ICCItem *pNumber);
 		static CString ComposeVerb (const CString &sVerb, DWORD dwVerbFlags);
 		static bool FindGenderedWord (const CString &sWord, GenomeTypes iGender, CString *retsResult = NULL);
+		static ICCItemPtr GetNounFlags (DWORD dwFlags);
 		static DWORD LoadNameFlags (CXMLElement *pDesc);
 		static void ParseItemName (const CString &sName, CString *retsRoot, CString *retsModifiers);
 		static void ParseLabelDesc (const CString &sLabelDesc, CString *retsLabel, CString *retsKey = NULL, int *retiKey = NULL, TArray<ELabelAttribs> *retAttribs = NULL);
@@ -107,6 +108,13 @@ class CLanguage
 class CLanguageDataBlock
 	{
 	public:
+		struct SEntryDesc
+			{
+			CString sID;
+			CString sText;
+			ICCItemPtr pCode;
+			};
+
 		CLanguageDataBlock (void) { }
 		CLanguageDataBlock (const CLanguageDataBlock &Src) { Copy(Src); }
 		~CLanguageDataBlock (void) { CleanUp(); }
@@ -115,6 +123,8 @@ class CLanguageDataBlock
 
 		void AddEntry (const CString &sID, const CString &sText);
 		void DeleteAll (void);
+		inline int GetCount (void) const { return m_Data.GetCount(); }
+		SEntryDesc GetEntry (int iIndex) const;
 		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc);
 		inline bool IsEmpty (void) const { return (m_Data.GetCount() == 0); }
 		void MergeFrom (const CLanguageDataBlock &Source);

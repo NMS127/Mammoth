@@ -450,6 +450,28 @@ bool CLanguage::FindGenderedWord (const CString &sWord, GenomeTypes iGender, CSt
 	return true;
 	}
 
+ICCItemPtr CLanguage::GetNounFlags (DWORD dwFlags)
+
+//	GetNounFlags
+//
+//	Returns an array of noun flags.
+
+	{
+	CCodeChain &CC = g_pUniverse->GetCC();
+	ICCItemPtr pResult(CC.CreateLinkedList());
+
+	for (int i = 0; i < NOUN_FLAG_TABLE.GetCount(); i++)
+		{
+		if (NOUN_FLAG_TABLE[i].Value & dwFlags)
+			pResult->AppendString(CC, CString(NOUN_FLAG_TABLE.GetKey(i)));
+		}
+
+	if (pResult->GetCount() == 0)
+		return ICCItemPtr(CC.CreateNil());
+
+	return pResult;
+	}
+
 DWORD CLanguage::LoadNameFlags (CXMLElement *pDesc)
 
 //	LoadNameFlags
@@ -802,7 +824,7 @@ CString CLanguage::ParseNounForm (const CString &sNoun, const CString &sModifier
 
 		//	Skip to the end of the article
 
-		while (pPos != '\0' && *pPos != ' ')
+		while (*pPos != '\0' && *pPos != ' ')
 			pPos++;
 
 		//	No article?
@@ -813,6 +835,15 @@ CString CLanguage::ParseNounForm (const CString &sNoun, const CString &sModifier
 
 			if (*pPos == ' ')
 				pPos++;
+			}
+
+		//	If we hit the end of the noun, then we don't have
+		//	an article.
+
+		else if (*pPos == '\0')
+			{
+			pPos = pArticleStart;
+			pArticleEnd = pPos;
 			}
 
 		//	Otherwise, include a trailing space in the article

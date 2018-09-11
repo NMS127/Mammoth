@@ -100,6 +100,7 @@
 #define PROPERTY_EXTENSION						CONSTLIT("extension")
 #define PROPERTY_MAP_DESCRIPTION				CONSTLIT("mapDescription")
 #define PROPERTY_MERGED							CONSTLIT("merged")
+#define PROPERTY_OBSOLETE_VERSION				CONSTLIT("obsoleteVersion")
 #define PROPERTY_NAME_PATTERN					CONSTLIT("namePattern")
 #define PROPERTY_UNID							CONSTLIT("unid")
 
@@ -601,6 +602,9 @@ ICCItem *CDesignType::FindBaseProperty (CCodeChainCtx &Ctx, const CString &sProp
     else if (strEquals(sProperty, PROPERTY_MERGED))
         return CC.CreateBool(m_bIsMerged);
 
+	else if (strEquals(sProperty, PROPERTY_OBSOLETE_VERSION))
+		return (m_dwObsoleteVersion > 0 ? CC.CreateInteger(m_dwObsoleteVersion) : CC.CreateNil());
+
     else if (strEquals(sProperty, PROPERTY_NAME_PATTERN))
 		{
 		pResult = CC.CreateSymbolTable();
@@ -1079,7 +1083,7 @@ void CDesignType::FireOnGlobalIntroCommand(const SEventHandlerDesc &Event, const
 //
 //	Fire event
 
-{
+	{
 	CCodeChainCtx Ctx;
 	Ctx.DefineContainingType(this);
 	Ctx.DefineString(CONSTLIT("aCommand"), sCommand);
@@ -1093,7 +1097,7 @@ void CDesignType::FireOnGlobalIntroCommand(const SEventHandlerDesc &Event, const
 	//	Done
 
 	Ctx.Discard(pResult);
-}
+	}
 
 void CDesignType::FireOnGlobalIntroStarted (const SEventHandlerDesc &Event)
 
@@ -1101,7 +1105,7 @@ void CDesignType::FireOnGlobalIntroStarted (const SEventHandlerDesc &Event)
 //
 //	Fire event
 
-{
+	{
 	CCodeChainCtx Ctx;
 	Ctx.DefineContainingType(this);
 
@@ -1114,7 +1118,7 @@ void CDesignType::FireOnGlobalIntroStarted (const SEventHandlerDesc &Event)
 	//	Done
 
 	Ctx.Discard(pResult);
-}
+	}
 
 void CDesignType::FireOnGlobalPlayerBoughtItem (const SEventHandlerDesc &Event, CSpaceObject *pSellerObj, const CItem &Item, const CCurrencyAndValue &Price)
 
@@ -1606,7 +1610,7 @@ void CDesignType::FireOnRandomEncounter (CSpaceObject *pObj)
 		}
 	}
 
-DWORDLONG CDesignType::GetAllocMemoryUsage (void) const
+size_t CDesignType::GetAllocMemoryUsage (void) const
 
 //	GetAllocMemoryUsage
 //
@@ -1615,7 +1619,7 @@ DWORDLONG CDesignType::GetAllocMemoryUsage (void) const
 //	itself.
 
 	{
-	DWORDLONG dwTotal = 0;
+	size_t dwTotal = 0;
 
 	if (m_pExtra)
 		dwTotal += sizeof(SExtra);
@@ -2050,6 +2054,31 @@ void CDesignType::GetEventHandlers (const CEventHandler **retpHandlers, TSortMap
 	AddUniqueHandlers(retInheritedHandlers);
 	}
 
+CLanguageDataBlock CDesignType::GetMergedLanguageBlock (void) const
+
+//	GetMergedLanguageBlock
+//
+//	Returns a fully merged language block.
+//
+//	NOTE: This is used only for debugging. When looking up a language entry it
+//	is much faster to use the Translate functions.
+
+	{
+	CLanguageDataBlock Result;
+
+	if (m_pExtra)
+		Result = m_pExtra->Language;
+
+	//	Merge inherited types
+
+	if (m_pInheritFrom)
+		Result.MergeFrom(m_pInheritFrom->GetMergedLanguageBlock());
+
+	//	Done
+
+	return Result;
+	}
+
 CXMLElement *CDesignType::GetScreen (const CString &sUNID)
 
 //	GetScreen
@@ -2078,6 +2107,20 @@ ICCItemPtr CDesignType::GetStaticData (const CString &sAttrib) const
 		return m_pInheritFrom->GetStaticData(sAttrib);
 
 	return ICCItemPtr(g_pUniverse->GetCC().CreateNil());
+	}
+
+void CDesignType::GetStats (SStats &Stats) const
+
+//	GetStats
+//
+//	Returns system stats about the type.
+
+	{
+	Stats = SStats();
+
+	//	Accumulate from base class
+
+	OnAccumulateStats(Stats);
 	}
 
 CString CDesignType::GetTypeChar (DesignTypes iType)
@@ -2121,6 +2164,24 @@ bool CDesignType::HasAttribute (const CString &sAttrib) const
 		return true;
 
 	return HasSpecialAttribute(sAttrib);
+	}
+
+bool CDesignType::HasLanguageBlock (void) const
+
+//	HasLanguageBlock
+//
+//	Returns TRUE if we have any language blocks.
+
+	{
+	if (m_pExtra && !m_pExtra->Language.IsEmpty())
+		return true;
+
+	if (m_pInheritFrom && m_pInheritFrom->HasLanguageBlock())
+		return true;
+
+	//	Not found
+
+	return false;
 	}
 
 bool CDesignType::HasSpecialAttribute (const CString &sAttrib) const

@@ -337,11 +337,18 @@ void CAIBehaviorCtx::CalcBestWeapon (CShip *pShip, CSpaceObject *pTarget, Metric
 
 			int iAdj = 100 + ((pShip->GetDestiny() % 60) - 30);
 			m_rBestWeaponRange = m_rBestWeaponRange * (iAdj * 0.01);
+
+			//	If this weapon is not pointed forwards, then remember that 
+			//	because it will affect how we maneuver.
+
+			int iWeaponFacing = m_pBestWeapon->GetRotation();
+			m_fBestWeaponIsBackwards = (iWeaponFacing > 30 && iWeaponFacing < 330);
 			}
 		else
 			{
 			m_iBestWeapon = devNone;
 			m_pBestWeapon = NULL;
+			m_fBestWeaponIsBackwards = false;
 
 			//	If we can't find a good weapon, at least set the weapon range so that we close
 			//	to secondary weapon range.
@@ -803,9 +810,9 @@ int CAIBehaviorCtx::CalcWeaponScore (CShip *pShip, CSpaceObject *pTarget, CInsta
 			iScore += (iDamageEffect / 10);
 		}
 
-	//	If this weapon has a fire arc and the target is in the arc, then prefer this weapon
+	//	If this weapon aligned, then prefer this weapon
 
-	if (pTarget && pWeapon->IsDirectional() && pWeapon->IsWeaponAligned(pShip, pTarget))
+	if (pTarget && pWeapon->IsWeaponAligned(pShip, pTarget))
 		iScore += 10;
 
 	//	If this is an area weapon then make sure there aren't too many friendlies around

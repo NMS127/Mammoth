@@ -171,6 +171,15 @@ void CItemEnhancement::AccumulateAttributes (CItemCtx &Ctx, TArray<SDisplayAttri
 			retList->Insert(SDisplayAttribute(iDisplayType, (IsDisadvantage() ? CONSTLIT("-blinded") : CONSTLIT("+tracking")), true));
 			break;
 
+		case etOmnidirectional:
+			if (IsDisadvantage())
+				retList->Insert(SDisplayAttribute(iDisplayType, CONSTLIT("-stuck"), true));
+			else if (GetDataX() == 0)
+				retList->Insert(SDisplayAttribute(iDisplayType, CONSTLIT("+omnidirectional"), true));
+			else
+				retList->Insert(SDisplayAttribute(iDisplayType, CONSTLIT("+swivel"), true));
+			break;
+
 		default:
 			retList->Insert(SDisplayAttribute(iDisplayType, CONSTLIT("+unknown"), true));
 			break;
@@ -479,6 +488,17 @@ EnhanceItemStatus CItemEnhancement::CombineAdvantageWithAdvantage (const CItem &
 			}
 
 		case etTracking:
+			{
+			if (Enhancement.GetDataX() > GetDataX())
+				{
+				*this = Enhancement;
+				return eisBetter;
+				}
+			else
+				return eisNoEffect;
+			}
+
+		case etOmnidirectional:
 			{
 			if (Enhancement.GetDataX() > GetDataX())
 				{
@@ -1002,6 +1022,14 @@ CString CItemEnhancement::GetEnhancedDesc (const CItem &Item, CSpaceObject *pIns
 		case etTracking:
 			return (IsDisadvantage() ? CONSTLIT("-blinded") : CONSTLIT("+tracking"));
 
+		case etOmnidirectional:
+			if (IsDisadvantage())
+				return CONSTLIT("-stuck");
+			else if (GetDataX() == 0)
+				return CONSTLIT("+omnidirectional");
+			else
+				return CONSTLIT("+swivel");
+
 		default:
 			return CONSTLIT("+unknown");
 		}
@@ -1095,6 +1123,28 @@ int CItemEnhancement::GetEnhancedRate (int iRate) const
 
 		default:
 			return iRate;
+		}
+	}
+
+int CItemEnhancement::GetFireArc (void) const
+
+//	GetFireArc
+//
+//	Returns a fire arc (0 - 360).
+
+	{
+	switch (GetType())
+		{
+		case etOmnidirectional:
+			if (IsDisadvantage())
+				return -1;
+			else if (GetDataX() == 0)
+				return 360;
+			else
+				return GetDataX();
+
+		default:
+			return 0;
 		}
 	}
 
@@ -1358,6 +1408,7 @@ int CItemEnhancement::GetValueAdj (const CItem &Item) const
 			case etSpecialDamage:
 			case etImmunityIonEffects:
 			case etTracking:
+			case etOmnidirectional:
 				return 100;
 
 			default:
@@ -1395,6 +1446,8 @@ ALERROR CItemEnhancement::InitFromDesc (const CString &sDesc, CString *retsError
 //
 //	{number}					Interpret as a mod code
 //	+armor:{n}					Add	armor special damage, where n is an item level
+//	+efficient:{n}				+/- n% power use.
+//									E.g., +efficient:20 = (100 - 20) = 80% power use
 //	+hpBonus:{n}				Add hp bonus.
 //	+hpBonus:{s}:{n}			DamageAdj for type s set to hpBonus n
 //	+immunity:{s}				Immunity to special damage s.
@@ -1408,6 +1461,7 @@ ALERROR CItemEnhancement::InitFromDesc (const CString &sDesc, CString *retsError
 //	+resistMatter:{n}			DamageAdj for matter damage set to n
 //	+shield:{n}					Add shield disrupt special damage, where n is an item level
 //	+speed:{n}					Faster. n is new delay value as a percent of normal
+//	+tracking:{n}				n is maneuver rate
 
 	{
 	//	If the string is a number then we interpret it as a mod code.
@@ -1684,6 +1738,31 @@ ALERROR CItemEnhancement::InitFromDesc (const CString &sDesc, CString *retsError
 			//	LATER: Support min and max delay limits
 			SetModSpeed(iValue);
 		}
+
+	//	Efficiency
+
+	else if (strEquals(sID, CONSTLIT("efficient")))
+		{
+		if (bDisadvantage && iValue > 0)
+			iValue = -iValue;
+
+		iValue = mathRound(iValue / 10.0);
+		SetModEfficiency(iValue);
+		}
+
+	//	Omnidirectional and swivel
+
+	else if (strEquals(sID, CONSTLIT("omnidirectional")))
+		{
+		if (bDisadvantage || iValue < 0)
+			m_dwMods = EncodeAX(etOmnidirectional | etDisadvantage);
+		else if (iValue == 0 || iValue >= 360)
+			m_dwMods = EncodeAX(etOmnidirectional, 0, 0);
+		else
+			m_dwMods = EncodeAX(etOmnidirectional, 0, iValue);
+		}
+
+	//	Tracking
 
 	else if (strEquals(sID, CONSTLIT("tracking")))
 		{

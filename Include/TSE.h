@@ -156,9 +156,9 @@ extern CUniverse *g_pUniverse;
 #include "TSEVersions.h"
 #include "TSEGeometry.h"
 #include "TSETypes.h"
-#include "TSELanguage.h"
 #include "TSEUtil.h"
 #include "TSETransLisp.h"
+#include "TSELanguage.h"
 #include "TSEDesign.h"
 #include "TSEStorage.h"
 #include "TSEMultiverse.h"
@@ -941,6 +941,7 @@ class CSpaceObject : public CObject
 		void FireOnDestroy (const SDestroyCtx &Ctx);
 		void FireOnDestroyObj (const SDestroyCtx &Ctx);
 		bool FireOnDockObjAdj (CSpaceObject **retpObj);
+		void FireOnDockObjDestroyed (CSpaceObject *pDockTarget, const SDestroyCtx &Ctx);
 		void FireOnEnteredGate (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGate);
 		void FireOnEnteredSystem (CSpaceObject *pGate);
 		void FireOnLoad (SLoadCtx &Ctx);
@@ -1435,7 +1436,7 @@ class CSpaceObject : public CObject
 		virtual int SetAISettingInteger (const CString &sSetting, int iValue) { return 0; }
 		virtual CString SetAISettingString (const CString &sSetting, const CString &sValue) { return NULL_STR; }
 		virtual void SetIdentified (bool bIdentified = true) { }
-		virtual void SetMapLabelPos (int x, int y) { }
+		virtual void SetMapLabelPos (CMapLabelArranger::EPositions iPos) { }
 		virtual void UpdateArmorItems (void) { }
 
 		//	...for objects that can bounce
@@ -1500,6 +1501,7 @@ class CSpaceObject : public CObject
 		virtual bool CanFireOn (CSpaceObject *pObj) { return true; }
 		virtual CDesignType *GetDefaultDockScreen (CString *retsName = NULL) const { return NULL; }
 		virtual void GateHook (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pStargate, bool bAscend) { if (!bAscend) Destroy(removedFromSystem, CDamageSource()); }
+		virtual CDesignType *GetDefaultOverride (void) const { return NULL; }
 		virtual void ObjectDestroyedHook (const SDestroyCtx &Ctx) { }
 		virtual void ObjectEnteredGateHook (CSpaceObject *pObjEnteredGate) { }
 		virtual void OnAscended (void) { }
