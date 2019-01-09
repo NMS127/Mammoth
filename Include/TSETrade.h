@@ -34,7 +34,7 @@ struct STradeServiceCtx
 	{
 	ETradeServiceTypes iService = serviceNone;		//	Service
 	CSpaceObject *pProvider = NULL;					//	Object providing the service
-	CEconomyType *pCurrency = NULL;					//	Currency to use
+	const CEconomyType *pCurrency = NULL;			//	Currency to use
 	const CTopologyNode *pNode = NULL;				//	Optional node (in case we have no provider)
 
 	int iCount = 0;									//	Number of items
@@ -60,22 +60,23 @@ class CTradingDesc
 
 		struct SServiceInfo
 			{
-			SServiceInfo (void) :
-					iService(serviceNone),
-					pItemType(NULL),
-					iPriceAdj(-1),
-					bInventoryAdj(false)
-				{ }
+			ETradeServiceTypes iService =  serviceNone;	//	Type of service
 
-			ETradeServiceTypes iService;		//	Type of service
+			CItemType *pItemType = NULL;				//	Item type
+			CString sItemCriteria;						//	If ItemType is NULL, this is the criteria
+			CString sTypeCriteria;						//	Type criteria (for selling ships, etc.).
 
-			CItemType *pItemType;				//	Item type
-			CString sItemCriteria;				//	If ItemType is NULL, this is the criteria
-			CString sTypeCriteria;				//	Type criteria (for selling ships, etc.).
+			int iPriceAdj = -1;
 
-			int iPriceAdj;
+			bool bInventoryAdj = false;					//	TRUE if we restock inventory for this service
+			bool bUpgradeInstallOnly = false;			//	TRUE if we only install as part of upgrade
+			};
 
-			bool bInventoryAdj;					//	TRUE if we restock inventory for this service
+		struct SHasServiceOptions
+			{
+			CItemCriteria ItemCriteria;					//	Service that matches this criteria
+
+			bool bFullInstallOnly = false;				//	If TRUE, service must not require purchase to install
 			};
 
 		CTradingDesc (void);
@@ -99,20 +100,21 @@ class CTradingDesc
 		bool GetArmorRepairPrice (CSpaceObject *pObj, CSpaceObject *pSource, const CItem &Item, int iHPToRepair, DWORD dwFlags, int *retiPrice) const;
 		bool GetDeviceInstallPrice (CSpaceObject *pObj, const CItem &Item, DWORD dwFlags, int *retiPrice, CString *retsReason = NULL, DWORD *retdwPriceFlags = NULL) const;
 		bool GetDeviceRemovePrice (CSpaceObject *pObj, const CItem &Item, DWORD dwFlags, int *retiPrice, DWORD *retdwPriceFlags = NULL) const;
-		inline CEconomyType *GetEconomyType (void) { return m_pCurrency; }
+		inline const CEconomyType *GetEconomyType (void) { return m_pCurrency; }
 		inline int GetMaxCurrency (void) { return m_iMaxCurrency; }
 		int GetMaxLevelMatched (ETradeServiceTypes iService, bool bDescriptionOnly = false) const;
 		bool GetRefuelItemAndPrice (CSpaceObject *pObj, CSpaceObject *pObjToRefuel, DWORD dwFlags, CItemType **retpItemType, int *retiPrice) const;
 		inline int GetReplenishCurrency (void) { return m_iReplenishCurrency; }
 		inline int GetServiceCount (void) const { return m_List.GetCount(); }
 		void GetServiceInfo (int iIndex, SServiceInfo &Result) const;
-		bool HasService (ETradeServiceTypes iService) const;
+		bool HasConsumerService (void) const;
+		bool HasService (ETradeServiceTypes iService, const SHasServiceOptions &Options = SHasServiceOptions()) const;
 		bool HasServiceUpgradeOnly (ETradeServiceTypes iService) const;
         inline bool HasServices (void) const { return (m_List.GetCount() > 0); }
 		bool Sells (CSpaceObject *pObj, const CItem &Item, DWORD dwFlags, int *retiPrice = NULL);
 		bool SellsShip (CSpaceObject *pObj, CShipClass *pClass, DWORD dwFlags, int *retiPrice = NULL);
 		bool SellsShip (CSpaceObject *pObj, CSpaceObject *pShip, DWORD dwFlags, int *retiPrice = NULL);
-		void SetEconomyType (CEconomyType *pCurrency) { m_pCurrency.Set(pCurrency); }
+		void SetEconomyType (const CEconomyType *pCurrency) { m_pCurrency.Set(pCurrency); }
 		void SetMaxCurrency (int iMaxCurrency) { m_iMaxCurrency = iMaxCurrency; }
 		void SetReplenishCurrency (int iReplenishCurrency) { m_iReplenishCurrency = iReplenishCurrency; }
 
@@ -126,6 +128,7 @@ class CTradingDesc
 
 		static int CalcPriceForService (ETradeServiceTypes iService, CSpaceObject *pProvider, const CItem &Item, int iCount, DWORD dwFlags);
 		static CString ServiceToString (ETradeServiceTypes iService);
+		static bool ParseHasServiceOptions (ICCItem *pOptions, SHasServiceOptions &retOptions);
 		static ETradeServiceTypes ParseService (const CString &sService);
 
 	private:
@@ -183,6 +186,7 @@ class CTradingDesc
 		bool HasServiceDescription (ETradeServiceTypes iService) const;
 		bool Matches (const CItem &Item, const SServiceDesc &Commodity) const;
 		bool Matches (CDesignType *pType, const SServiceDesc &Commodity) const;
+		bool MatchesHasServiceOptions (const SHasServiceOptions &Options, const SServiceDesc &Service) const;
 		void ReadServiceFromFlags (DWORD dwFlags, ETradeServiceTypes *retiService, DWORD *retdwFlags);
 		bool SetInventoryCount (CSpaceObject *pObj, SServiceDesc &Desc, CItemType *pItemType);
 
@@ -254,5 +258,5 @@ class CTradingComputer
 		static int GetItemEstimatedPrice (const CTopologyNode *pNode, CItemType *pItemType);
 		static void GetItemEstimatedPriceList (const CUniverse &Universe, CItemType *pItemType, DWORD dwFlags, TSortMap<int, TArray<const CTopologyNode *>> &NodesAtPrice);
 
-		static int GetItemBuyPrice (const CUniverse &Universe, const CTopologyNode *pNode, const CItem &Item, DWORD *retdwObjID = NULL);
+		static int GetItemBuyPrice (const CUniverse &Universe, const CTopologyNode *pNode, const CDesignTypeCriteria &Criteria, const CItem &Item, DWORD *retdwObjID = NULL);
 	};

@@ -172,19 +172,27 @@
 #define ERR_UNKNOWN_EQUIPMENT					CONSTLIT("unknown equipment: %s")
 #define ERR_UNKNOWN_EQUIPMENT_DIRECTIVE			CONSTLIT("unknown equipment directive: %s")
 
+#define PROPERTY_ARMOR_SPEED_ADJ				CONSTLIT("armorSpeedAdj")
+#define PROPERTY_ARMOR_SPEED_ADJ_PARAM			CONSTLIT("armorSpeedAdj:")
 #define PROPERTY_CURRENCY						CONSTLIT("currency")
 #define PROPERTY_CURRENCY_NAME					CONSTLIT("currencyName")
 #define PROPERTY_DEFAULT_SOVEREIGN				CONSTLIT("defaultSovereign")
 #define PROPERTY_DRIVE_POWER					CONSTLIT("drivePowerUse")
+#define PROPERTY_FUEL_EFFICIENCY				CONSTLIT("fuelEfficiency")
 #define PROPERTY_HAS_TRADE_DESC					CONSTLIT("hasTradeDesc")
 #define PROPERTY_HAS_VARIANTS					CONSTLIT("hasVariants")
+#define PROPERTY_HULL_POINTS					CONSTLIT("hullPoints")
 #define PROPERTY_HULL_VALUE						CONSTLIT("hullValue")
+#define PROPERTY_MAX_ARMOR_CLASS				CONSTLIT("maxArmorClass")
 #define PROPERTY_MAX_ARMOR_MASS					CONSTLIT("maxArmorMass")
 #define PROPERTY_MAX_SPEED						CONSTLIT("maxSpeed")
 #define PROPERTY_MAX_SPEED_AT_MAX_ARMOR			CONSTLIT("maxSpeedAtMaxArmor")
 #define PROPERTY_MAX_SPEED_AT_MIN_ARMOR			CONSTLIT("maxSpeedAtMinArmor")
 #define PROPERTY_MAX_SPEED_BY_ARMOR_MASS		CONSTLIT("maxSpeedByArmorMass")
 #define PROPERTY_POWER							CONSTLIT("power")
+#define PROPERTY_PRICE							CONSTLIT("price")
+#define PROPERTY_RATED_POWER					CONSTLIT("ratedPower")
+#define PROPERTY_STD_ARMOR_CLASS				CONSTLIT("stdArmorClass")
 #define PROPERTY_STD_ARMOR_MASS					CONSTLIT("stdArmorMass")
 #define PROPERTY_THRUST							CONSTLIT("thrust")
 #define PROPERTY_THRUST_RATIO					CONSTLIT("thrustRatio")
@@ -212,6 +220,8 @@ const Metric DRIVE_POWER_EXP =					1.2;
 const Metric DRIVE_POWER_FACTOR =				13.0;
 
 const int MAX_HERO_IMAGE_HEIGHT =               528;
+
+const Metric STRUCTURAL_HP_POWER =				0.65;
 
 struct ScoreDesc
 	{
@@ -322,16 +332,6 @@ Metric CShipClass::GetStdCombatStrength (int iLevel)
 	const Metric k0 = 1.4;
 	const Metric k1 = 8.0;
 	return k1 * pow(k0, iLevel - 1);
-	}
-
-int CShipClass::CalcArmorSpeedBonus (int iTotalArmorMass) const
-
-//	CalcArmorSpeedBonus
-//
-//	Computes addition/penalty to max speed based on the total armor mass.
-
-	{
-	return m_Hull.CalcArmorSpeedBonus(m_Armor.GetCount(), iTotalArmorMass);
 	}
 
 CShipClass::EBalanceTypes CShipClass::CalcBalanceType (CString *retsDesc, Metric *retrCombatStrength) const
@@ -824,93 +824,49 @@ Metric CShipClass::CalcDefenseRate (void) const
 	return rRate;
 	}
 
-CurrencyValue CShipClass::CalcHullValue (void) const
+Metric CShipClass::CalcFuelEfficiency (const CDeviceDescList &Devices) const
+
+//	CalcFueldEfficiency
+//
+//	Computes the fuel efficiency of the class, which is defined as the number of
+//	ticks required to consume 10 standard fuel rod assuming:
+//
+//	1. Max shield consumption
+//	2. Max primary weapon consumption
+//	3. Max thrust
+//	4. Standard consumption from all other devices/armor
+
+	{
+	int iPowerUsed = CalcRatedPowerUse(Devices);
+
+	//	Compute reactor efficiency
+
+	Metric rEfficiency = m_Perf.GetReactorDesc().GetEfficiency();
+	if (rEfficiency <= 0.0)
+		rEfficiency = g_MWPerFuelUnit;
+
+	//	Compute the number of fuel units per tick.
+
+	Metric rFuelPerTick = iPowerUsed / rEfficiency;
+	if (rFuelPerTick <= 0.0)
+		return 0.0;
+
+	return 10.0 * FUEL_UNITS_PER_STD_ROD / rFuelPerTick;
+	}
+
+CurrencyValue CShipClass::CalcHullValue (Metric *retrPoints) const
 
 //	CalcHullValue
 //
 //	Computes the value of the hull based on its properties (in credits).
 
 	{
-	static const Metric PARTIAL_SLOT_FACTOR = 0.5;
-	static const Metric CARGO_PER_POINT = 100.0;
-	static const Metric MAX_CARGO_PER_POINT = 200.0;
-	static const int STD_ARMOR_SEGMENTS = 4;
-	static const Metric POINTS_PER_ARMOR_SEGMENT = 0.5;
-	static const Metric ARMOR_PER_POINT = 6000.0;
-	static const Metric MAX_ARMOR_PER_POINT = 12000.0;
-	static const Metric MIN_SPEED = 15.0;
-	static const Metric SPEED_PER_POINT = 6.0;
-	static const Metric THRUST_RATIO_PER_POINT = 16.0;
-	static const Metric MAX_ROTATION_PER_POINT = 9.0;
+	CHullPointsCalculator Calc(*this);
 
-	static const Metric PRICE_PER_TENTH_MW = 0.5;
-	static const Metric POINT_BIAS = -10.0;
-	static const Metric POINT_EXP = 1.5;
+	if (retrPoints)
+		*retrPoints = Calc.GetTotalPoints();
 
-	//	We need to have max reactor powe defined, or else we can't compute the
-	//	values.
-
-	if (m_Hull.GetMaxReactorPower() == 0)
-		return 0;
-
-	//	We use a point system to sum of the value of the hull properties.
-
-	Metric rPoints = 0.0;
-
-	//	Start by adding up points for device slots.
-
-	int iFullSlots = Min(m_Hull.GetMaxWeapons(), m_Hull.GetMaxNonWeapons());
-	int iPartialSlots = m_Hull.GetMaxDevices() - iFullSlots;
-
-	rPoints += iFullSlots;
-	rPoints += (iPartialSlots * PARTIAL_SLOT_FACTOR);
-
-	//	Add up points for cargo space
-
-	rPoints += m_Hull.GetCargoSpace() / CARGO_PER_POINT;
-	rPoints += (m_Hull.GetMaxCargoSpace() - m_Hull.GetCargoSpace()) / MAX_CARGO_PER_POINT;
-
-	//	Add points for the number of armor segments and for max armor
-
-	rPoints += (m_Armor.GetCount() - STD_ARMOR_SEGMENTS) * POINTS_PER_ARMOR_SEGMENT;
-	rPoints += m_Hull.GetStdArmorMass() / ARMOR_PER_POINT;
-	rPoints += m_Hull.GetMaxArmorMass() / MAX_ARMOR_PER_POINT;
-
-	//	Points for max speed
-
-	rPoints += Max(0.0, ((100.0 * m_DriveDesc.GetMaxSpeed() / LIGHT_SPEED) - MIN_SPEED)) / SPEED_PER_POINT;
-
-	//	Points for thrust ratio
-
-	Metric rThrustRatio = m_rThrustRatio;
-	if (rThrustRatio <= 0.0)
-		rThrustRatio = CDriveDesc::CalcThrustRatio(m_DriveDesc.GetThrust(), m_Hull.GetMass());
-
-	rPoints += rThrustRatio / THRUST_RATIO_PER_POINT;
-
-	//	Points for maneuverability
-
-	rPoints += m_RotationDesc.GetMaxRotationPerTick() / MAX_ROTATION_PER_POINT;
-
-	//	Add any extra points added manually.
-
-	rPoints += m_Hull.GetExtraPoints();
-
-	//	Compute a price unit based on the maximum reactor power
-
-	Metric rUnitPrice = PRICE_PER_TENTH_MW * m_Hull.GetMaxReactorPower();
-
-	//	Scale points
-
-	Metric rScaledPoints = pow(rPoints + POINT_BIAS, POINT_EXP);
-
-	//	Compute price
-
-	Metric rPrice = rScaledPoints * rUnitPrice;
-
-	//	Done
-
-	return (CurrencyValue)round(rPrice);
+	return Calc.GetValueInCredits();
 	}
 
 int CShipClass::CalcLevel (void) const
@@ -1048,7 +1004,7 @@ ICCItem *CShipClass::CalcMaxSpeedByArmorMass (CCodeChainCtx &Ctx) const
 
 	{
 	int iStdSpeed = mathRound(100.0 * m_Perf.GetDriveDesc().GetMaxSpeed() / LIGHT_SPEED);
-	return m_Hull.CalcMaxSpeedByArmorMass(Ctx, iStdSpeed);
+	return m_Hull.GetArmorLimits().CalcMaxSpeedByArmorMass(Ctx, iStdSpeed);
 	}
 
 void CShipClass::CalcPerformance (void)
@@ -1105,6 +1061,70 @@ void CShipClass::CalcPerformance (void)
 
 	DEBUG_CATCH
     }
+
+int CShipClass::CalcRatedPowerUse (const CDeviceDescList &Devices) const
+
+//	CalcRatedPowerUse
+//
+//	Computes the rated power used by the class, which is defined as the number 
+//	power consumed at:
+//
+//	1. Max shield consumption
+//	2. Max primary weapon consumption
+//	3. Max thrust
+//	4. Idle consumption from all other devices/armor
+
+	{
+	int iPowerUsed = 0;
+
+	//	We always consume power for life support
+
+	iPowerUsed += CPowerConsumption::DEFAULT_LIFESUPPORT_POWER_USE;
+
+	//	Consume power from drive (as if we're always thrusting)
+
+	iPowerUsed += m_Perf.GetDriveDesc().GetPowerUse();
+
+	//	Add devices
+
+	for (int i = 0; i < Devices.GetCount(); i++)
+		{
+		const CItem &Item = Devices.GetDeviceDesc(i).Item;
+		CItemCtx ItemCtx(this, Item);
+		CDeviceClass *pDevice = ItemCtx.GetDeviceClass();
+
+		bool bAddedWeapon = false;
+		int iIdlePowerUse;
+		int iFullPowerUse = pDevice->GetPowerRating(ItemCtx, &iIdlePowerUse);
+
+		switch (Item.GetType()->GetCategory())
+			{
+			//	Add first weapon at full power
+
+			case itemcatWeapon:
+				if (!bAddedWeapon)
+					{
+					iPowerUsed += iFullPowerUse;
+					bAddedWeapon = true;
+					}
+				break;
+
+			//	Add shields at full power
+
+			case itemcatShields:
+				iPowerUsed += iFullPowerUse;
+				break;
+
+			//	All other devices at idle power
+
+			default:
+				iPowerUsed += iIdlePowerUse;
+				break;
+			}
+		}
+
+	return iPowerUsed;
+	}
 
 int CShipClass::CalcScore (void)
 
@@ -1238,7 +1258,7 @@ void CShipClass::ComputeMovementStats (int *retiSpeed, int *retiThrust, int *ret
 
 	//	Figure out the maneuverability of the ship
 
-    const CIntegralRotationDesc &RotationDesc = m_Perf.GetRotationDesc();
+    const CIntegralRotationDesc &RotationDesc = m_Perf.GetIntegralRotationDesc();
 	if (RotationDesc.GetMaxRotationTimeTicks() >= 90)
 		*retiManeuver = enumLow;
 	else if (RotationDesc.GetMaxRotationTimeTicks() > 30)
@@ -1546,7 +1566,7 @@ void CShipClass::CreateImage (CG32bitImage &Dest, int iTick, int iRotation, Metr
 		int yPos = yCenter -(int)mathRound(vPos.GetY());
 
 		int cxScaledSize = (int)mathRound(rScale * pClass->m_Image.GetSimpleImage().GetImageWidth());
-		int iDirection = pClass->GetRotationDesc().GetFrameIndex(iRotation);
+		int iDirection = pClass->GetIntegralRotationDesc().GetFrameIndex(iRotation);
 
 		m_Image.GetSimpleImage().PaintScaledImage(Dest, xPos, yPos, iTick, iDirection, cxScaledSize, cxScaledSize, CObjectImageArray::FLAG_CACHED);
 		}
@@ -1554,7 +1574,7 @@ void CShipClass::CreateImage (CG32bitImage &Dest, int iTick, int iRotation, Metr
 	//	Blt the main image on top
 
 	int cxScaledSize = (int)mathRound(rScale * m_Image.GetSimpleImage().GetImageWidth());
-	int iDirection = GetRotationDesc().GetFrameIndex(iRotation);
+	int iDirection = GetIntegralRotationDesc().GetFrameIndex(iRotation);
 	m_Image.GetSimpleImage().PaintScaledImage(Dest, xOrigin, yOrigin, iTick, iDirection, cxScaledSize, cxScaledSize, CObjectImageArray::FLAG_CACHED);
 	}
 
@@ -1620,7 +1640,7 @@ void CShipClass::CreateScaledImage (CG32bitImage &Dest, int iTick, int iRotation
 		int yPos = yCenter -(int)mathRound(vPos.GetY());
 
 		int cxScaledSize = (int)mathRound(rScale * pClass->m_Image.GetSimpleImage().GetImageWidth());
-		int iDirection = pClass->GetRotationDesc().GetFrameIndex(iRotation);
+		int iDirection = pClass->GetIntegralRotationDesc().GetFrameIndex(iRotation);
 
 		pClass->m_Image.GetSimpleImage().PaintScaledImage(Dest, xPos, yPos, iTick, iDirection, cxScaledSize, cxScaledSize, CObjectImageArray::FLAG_CACHED);
 		}
@@ -1628,7 +1648,7 @@ void CShipClass::CreateScaledImage (CG32bitImage &Dest, int iTick, int iRotation
 	//	Blt the main image on top
 
 	int cxScaledSize = (int)mathRound(rScale * m_Image.GetSimpleImage().GetImageWidth());
-	int iDirection = GetRotationDesc().GetFrameIndex(iRotation);
+	int iDirection = GetIntegralRotationDesc().GetFrameIndex(iRotation);
 	m_Image.GetSimpleImage().PaintScaledImage(Dest, xOrigin, yOrigin, iTick, iDirection, cxScaledSize, cxScaledSize, CObjectImageArray::FLAG_CACHED);
 	}
 
@@ -1736,9 +1756,9 @@ bool CShipClass::FindDataField (const CString &sField, CString *retsValue) const
 	else if (strEquals(sField, FIELD_MANUFACTURER))
 		*retsValue = m_sManufacturer;
 	else if (strEquals(sField, FIELD_MASS))
-		*retsValue = strFromInt(m_Hull.GetMass());
+		*retsValue = strFromInt(mathRound(CalcMass(m_AverageDevices)));
 	else if (strEquals(sField, FIELD_MAX_ROTATION))
-		*retsValue = strFromInt(mathRound(GetRotationDesc().GetMaxRotationSpeedDegrees()));
+		*retsValue = strFromInt(mathRound(GetIntegralRotationDesc().GetMaxRotationSpeedDegrees()));
 	else if (strEquals(sField, FIELD_MAX_SPEED))
 		*retsValue = strFromInt((int)((100.0 * m_Perf.GetDriveDesc().GetMaxSpeed() / LIGHT_SPEED) + 0.5));
 	else if (strEquals(sField, FIELD_MAX_STRUCTURAL_HP))
@@ -1879,7 +1899,7 @@ bool CShipClass::FindDataField (const CString &sField, CString *retsValue) const
 		*retsValue = strFromInt((int)((1000.0 / m_AISettings.GetFireRateAdj()) + 0.5));
 	else if (strEquals(sField, FIELD_MANEUVER))
 		{
-		Metric rManeuver = g_SecondsPerUpdate * GetRotationDesc().GetMaxRotationSpeedDegrees();
+		Metric rManeuver = g_SecondsPerUpdate * GetIntegralRotationDesc().GetMaxRotationSpeedDegrees();
 		*retsValue = strFromInt((int)((rManeuver * 1000.0) + 0.5));
 		}
 	else if (strEquals(sField, FIELD_THRUST))
@@ -1942,7 +1962,7 @@ bool CShipClass::FindDataField (const CString &sField, CString *retsValue) const
 	else if (strEquals(sField, FIELD_GENERIC_NAME))
 		*retsValue = GetGenericName();
 	else if (strEquals(sField, FIELD_MAX_ARMOR_MASS))
-		*retsValue = strFromInt(m_Hull.GetMaxArmorMass());
+		*retsValue = strFromInt(m_Hull.GetArmorLimits().GetMaxArmorMass());
 	else if (strEquals(sField, FIELD_HULL_MASS))
 		*retsValue = strFromInt(m_Hull.GetMass());
 	else if (strEquals(sField, FIELD_DEVICE_SLOTS))
@@ -2222,7 +2242,7 @@ const CDriveDesc &CShipClass::GetDriveDesc (const CItem **retpDriveItem) const
     return m_Perf.GetDriveDesc();
     }
 
-CEconomyType *CShipClass::GetEconomyType (void) const
+const CEconomyType *CShipClass::GetEconomyType (void) const
 
 //	GetEconomyType
 //
@@ -2237,7 +2257,7 @@ CEconomyType *CShipClass::GetEconomyType (void) const
 
 	//	Otherwise, see if we have a hull price from the player settings
 
-	CEconomyType *pCurrency = m_Hull.GetValue().GetCurrencyType();
+	const CEconomyType *pCurrency = m_Hull.GetValue().GetCurrencyType();
 	if (pCurrency)
 		return pCurrency;
 
@@ -2576,7 +2596,7 @@ int CShipClass::GetMaxStructuralHitPoints (void) const
 
 	//	Otherwise we have to compute it based on level and mass
 
-	return (int)(pow(1.3, m_iLevel) * (sqrt(m_Hull.GetMass()) + 10.0));
+	return (int)(pow(1.3, m_iLevel) * (pow(m_Hull.GetMass(), STRUCTURAL_HP_POWER) + 10.0));
 	}
 
 CString CShipClass::GetNamePattern (DWORD dwNounFormFlags, DWORD *retdwFlags) const
@@ -3279,6 +3299,32 @@ ALERROR CShipClass::OnFinishBindDesign (SDesignLoadCtx &Ctx)
 
 	m_Hull.InitCyberDefenseLevel(m_iLevel);
 
+	//	Compute hull value, if necessary
+
+	if (!m_fHullValueOverride && !IsVirtual())
+		{
+		//	Figure out the currency to use from either the trade descriptor or
+		//	the currency used by installed devices.
+
+		const CEconomyType *pCurrency = (GetTradingDesc() ? pCurrency = GetTradingDesc()->GetEconomyType() : NULL);
+		if (pCurrency == NULL)
+			pCurrency = (m_AverageDevices.GetCount() > 0 ? m_AverageDevices.GetDeviceClass(0)->GetItemType()->GetCurrencyType() : NULL);
+		if (pCurrency == NULL)
+			pCurrency = g_pUniverse->GetDefaultCurrency();
+
+		if (pCurrency)
+			m_Hull.SetValue(pCurrency->ExchangeFrom(g_pUniverse->GetDefaultCurrency(), CalcHullValue()));
+		}
+
+	//	In debug mode, warn if we're installing armor that is beyond the current
+	//	armor limits.
+
+	if (g_pUniverse->InDebugMode() 
+			&& m_Armor.GetCount() > 0
+			&& m_Hull.HasArmorLimits()
+			&& m_Hull.GetArmorLimits().CanInstallArmor(CItem(m_Armor.GetSegment(0).GetArmorClass()->GetItemType(), 1)) != CArmorLimits::resultOK)
+		::kernelDebugLogPattern("WARNING: %s armor not compatible with ship class %s (%08x)", m_Armor.GetSegment(0).GetArmorClass()->GetName(), GetNounPhrase(), GetUNID());
+
 	//	Done
 
 	return NOERROR;
@@ -3313,6 +3359,7 @@ void CShipClass::OnInitFromClone (CDesignType *pSource)
 	m_iLevel = pClass->m_iLevel;
 	m_fScoreOverride = pClass->m_fScoreOverride;
 	m_fLevelOverride = pClass->m_fLevelOverride;
+	m_fHullValueOverride = pClass->m_fHullValueOverride;
 	//	m_iLevelType and m_rCombatStrength will get computed during Bind.
 
 	m_fShipCompartment = pClass->m_fShipCompartment;
@@ -3458,10 +3505,17 @@ ALERROR CShipClass::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (error = m_DriveDesc.InitFromShipClassXML(Ctx, pDesc, GetUNID(), &m_rThrustRatio, &iMaxSpeed))
 		return ComposeLoadError(Ctx, Ctx.sError);
 
+	//	Reactor
+
+	if (error = m_ReactorDesc.InitFromShipClassXML(Ctx, pDesc, GetUNID()))
+		return ComposeLoadError(Ctx, Ctx.sError);
+
 	//	Hull descriptor
 
 	if (error = m_Hull.InitFromXML(Ctx, pDesc, iMaxSpeed))
 		return ComposeLoadError(Ctx, Ctx.sError);
+
+	m_fHullValueOverride = !m_Hull.GetValue().IsEmpty();
 
 	//	If 0 size, come up with a reasonable default based on image size.
 
@@ -3469,8 +3523,10 @@ ALERROR CShipClass::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 		m_Hull.SetSize(CalcDefaultSize(m_Image.GetSimpleImage()));
 
 	//	If we have no max armor limit, then we compute default values.
+	//
+	//	NOTE: For now we never set default armor limits. See TSEShipClass.h
 
-	if (m_Hull.GetMaxArmorMass() == 0)
+	if (m_Hull.NeedsDefaultArmorLimits())
 		m_Hull.InitDefaultArmorLimits(iMaxSpeed, (m_rThrustRatio > 0.0 ? m_rThrustRatio : CDriveDesc::CalcThrustRatio(m_DriveDesc.GetThrust(), m_Hull.GetMass())));
 
 	//	Wreck descriptor
@@ -3488,11 +3544,6 @@ ALERROR CShipClass::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 				pEffects))
 			return ComposeLoadError(Ctx, Ctx.sError);
 		}
-
-	//	Other devices
-
-	if (error = m_ReactorDesc.InitFromXML(Ctx, pDesc, GetUNID(), true))
-		return error;
 
 	//	Load armor
 
@@ -3685,14 +3736,6 @@ ALERROR CShipClass::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
             return ComposeLoadError(Ctx, Ctx.sError);
         }
 
-	//	If we don't have a hull value, compute it now.
-
-	if (m_Hull.GetValue().IsEmpty())
-		{
-		//	Defaults to credits
-		m_Hull.SetValue(CCurrencyAndValue(CalcHullValue()));
-		}
-
 	//	Done
 
 	return NOERROR;
@@ -3756,7 +3799,42 @@ ICCItemPtr CShipClass::OnGetProperty (CCodeChainCtx &Ctx, const CString &sProper
 	{
 	CCodeChain &CC = g_pUniverse->GetCC();
 
-	if (strEquals(sProperty, PROPERTY_CURRENCY))
+	if (strEquals(sProperty, PROPERTY_ARMOR_SPEED_ADJ))
+		{
+		TArray<CItemCtx> Armor;
+		Armor.InsertEmpty(m_Armor.GetCount());
+		for (int i = 0; i < Armor.GetCount(); i++)
+			{
+			CItem ArmorItem(m_Armor.GetSegment(i).GetArmorClass()->GetItemType(), 1);
+			if (m_Hull.GetArmorLimits().CanInstallArmor(ArmorItem) != CArmorLimits::resultOK)
+				return ICCItemPtr(CC.CreateString(CONSTLIT("[Armor incompatible]")));
+
+			Armor[i] = CItemCtx(ArmorItem);
+			}
+
+		int iBonus = m_Hull.GetArmorLimits().CalcArmorSpeedBonus(Armor);
+		if (iBonus)
+			return ICCItemPtr(CC.CreateInteger(iBonus));
+		else
+			return ICCItemPtr(CC.CreateNil());
+		}
+
+	else if (strStartsWith(sProperty, PROPERTY_ARMOR_SPEED_ADJ_PARAM))
+		{
+		const CArmorLimits &ArmorLimits = m_Hull.GetArmorLimits();
+		if (!ArmorLimits.HasArmorLimits())
+			return ICCItemPtr(CC.CreateNil());
+
+		CString sArmorClassID = strSubString(sProperty, PROPERTY_ARMOR_SPEED_ADJ_PARAM.GetLength());
+
+		int iSpeedAdj;
+		if (!m_Hull.GetArmorLimits().CalcArmorSpeedBonus(sArmorClassID, m_Armor.GetCount(), &iSpeedAdj))
+			return ICCItemPtr(CC.CreateString(CONSTLIT("[Armor incompatible]")));
+
+		return ICCItemPtr(CC.CreateInteger(iSpeedAdj));
+		}
+
+	else if (strEquals(sProperty, PROPERTY_CURRENCY))
 		return ICCItemPtr(CC.CreateInteger(GetEconomyType()->GetUNID()));
 		
 	else if (strEquals(sProperty, PROPERTY_CURRENCY_NAME))
@@ -3765,29 +3843,50 @@ ICCItemPtr CShipClass::OnGetProperty (CCodeChainCtx &Ctx, const CString &sProper
 	else if (strEquals(sProperty, PROPERTY_DEFAULT_SOVEREIGN))
 		return (m_pDefaultSovereign.GetUNID() ? ICCItemPtr(CC.CreateInteger(m_pDefaultSovereign.GetUNID())) : ICCItemPtr(CC.CreateNil()));
 
+	else if (strEquals(sProperty, PROPERTY_FUEL_EFFICIENCY))
+		return ICCItemPtr(CC.CreateInteger(mathRound(CalcFuelEfficiency(m_AverageDevices))));
+
 	else if (strEquals(sProperty, PROPERTY_HAS_TRADE_DESC))
 		return ICCItemPtr(CC.CreateBool(m_pTrade != NULL));
 
 	else if (strEquals(sProperty, PROPERTY_HAS_VARIANTS))
 		return ICCItemPtr(CC.CreateBool(m_pDevices && m_pDevices->IsVariant()));
 
+	else if (strEquals(sProperty, PROPERTY_HULL_POINTS))
+		{
+		CHullPointsCalculator Calc(*this);
+		return ICCItemPtr(CC.CreateInteger(mathRound(Calc.GetTotalPoints() * 10.0)));
+		}
+
 	else if (strEquals(sProperty, PROPERTY_HULL_VALUE))
 		return CTLispConvert::CreateCurrencyValue(CC, GetEconomyType()->Exchange(m_Hull.GetValue()));
 
+	else if (strEquals(sProperty, PROPERTY_MAX_ARMOR_CLASS))
+		return (!m_Hull.GetArmorLimits().GetMaxArmorClass().IsBlank() ? ICCItemPtr(CC.CreateString(m_Hull.GetArmorLimits().GetMaxArmorClass())) : ICCItemPtr(CC.CreateNil()));
+
 	else if (strEquals(sProperty, PROPERTY_MAX_ARMOR_MASS))
-		return (m_Hull.GetMaxArmorMass() > 0 ? ICCItemPtr(CC.CreateInteger(m_Hull.GetMaxArmorMass())) : ICCItemPtr(CC.CreateNil()));
+		return (m_Hull.GetArmorLimits().GetMaxArmorMass() > 0 ? ICCItemPtr(CC.CreateInteger(m_Hull.GetArmorLimits().GetMaxArmorMass())) : ICCItemPtr(CC.CreateNil()));
 
 	else if (strEquals(sProperty, PROPERTY_MAX_SPEED_AT_MAX_ARMOR))
-		return (m_Hull.GetMaxArmorSpeedPenalty() != 0 ? ICCItemPtr(CC.CreateInteger(m_Perf.GetDriveDesc().GetMaxSpeedFrac() + m_Hull.GetMaxArmorSpeedPenalty())) : ICCItemPtr(CC.CreateNil()));
+		return ICCItemPtr(CC.CreateInteger(m_Perf.GetDriveDesc().GetMaxSpeedFrac() + m_Hull.GetArmorLimits().GetMaxArmorSpeedPenalty()));
 
 	else if (strEquals(sProperty, PROPERTY_MAX_SPEED_AT_MIN_ARMOR))
-		return (m_Hull.GetMinArmorSpeedBonus() != 0 ? ICCItemPtr(CC.CreateInteger(m_Perf.GetDriveDesc().GetMaxSpeedFrac() + m_Hull.GetMinArmorSpeedBonus())) : ICCItemPtr(CC.CreateNil()));
+		return ICCItemPtr(CC.CreateInteger(m_Perf.GetDriveDesc().GetMaxSpeedFrac() + m_Hull.GetArmorLimits().GetMinArmorSpeedBonus()));
 
 	else if (strEquals(sProperty, PROPERTY_MAX_SPEED_BY_ARMOR_MASS))
 		return ICCItemPtr(CalcMaxSpeedByArmorMass(Ctx));
 
+	else if (strEquals(sProperty, PROPERTY_PRICE))
+		return ICCItemPtr(CC.CreateInteger((int)GetTradePrice(NULL, true).GetValue()));
+
+	else if (strEquals(sProperty, PROPERTY_RATED_POWER))
+		return ICCItemPtr(CC.CreateInteger(CalcRatedPowerUse(m_AverageDevices)));
+
+	else if (strEquals(sProperty, PROPERTY_STD_ARMOR_CLASS))
+		return (!m_Hull.GetArmorLimits().GetStdArmorClass().IsBlank() ? ICCItemPtr(CC.CreateString(m_Hull.GetArmorLimits().GetStdArmorClass())) : ICCItemPtr(CC.CreateNil()));
+
 	else if (strEquals(sProperty, PROPERTY_STD_ARMOR_MASS))
-		return (m_Hull.GetStdArmorMass() > 0 ? ICCItemPtr(CC.CreateInteger(m_Hull.GetStdArmorMass())) : ICCItemPtr(CC.CreateNil()));
+		return (m_Hull.GetArmorLimits().GetStdArmorMass() > 0 ? ICCItemPtr(CC.CreateInteger(m_Hull.GetArmorLimits().GetStdArmorMass())) : ICCItemPtr(CC.CreateNil()));
 
 	else if (strEquals(sProperty, PROPERTY_WRECK_STRUCTURAL_HP))
 		return ICCItemPtr(CC.CreateInteger(GetMaxStructuralHitPoints()));
@@ -4184,7 +4283,7 @@ void CShipClass::PaintScaled (CG32bitImage &Dest,
 		Dest.Blt(0, 0, Image.GetWidth(), Image.GetHeight(), Image, x - (Image.GetWidth() / 2), y - (Image.GetHeight() / 2));
 		}
 	else
-		m_Image.GetSimpleImage().PaintScaledImage(Dest, x, y, iTick, GetRotationDesc().GetFrameIndex(iRotation), cxWidth, cyHeight, CObjectImageArray::FLAG_CACHED);
+		m_Image.GetSimpleImage().PaintScaledImage(Dest, x, y, iTick, GetIntegralRotationDesc().GetFrameIndex(iRotation), cxWidth, cyHeight, CObjectImageArray::FLAG_CACHED);
 	}
 
 void CShipClass::PaintThrust (CG32bitImage &Dest, 

@@ -291,10 +291,7 @@ ALERROR CShipTable::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (pElement)
 		{
 		if (error = IShipGenerator::CreateFromXML(Ctx, pElement, &m_pGenerator))
-			{
-			Ctx.sError = strPatternSubst(CONSTLIT("ShipTable (%x): %s"), GetUNID(), Ctx.sError);
-			return error;
-			}
+			return ComposeLoadError(Ctx, Ctx.sError);
 		}
 
 	return NOERROR;
@@ -912,6 +909,12 @@ ALERROR CSingleShip::LoadFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (error = m_pShipClass.LoadUNID(Ctx, pDesc->GetAttribute(CLASS_ATTRIB)))
 		return error;
 
+	if (m_pShipClass.GetUNID() == 0)
+		{
+		Ctx.sError = CONSTLIT("Invalid or missing ship class.");
+		return ERR_FAIL;
+		}
+
 	if (error = m_pSovereign.LoadUNID(Ctx, pDesc->GetAttribute(SOVEREIGN_ATTRIB)))
 		return error;
 
@@ -923,7 +926,7 @@ ALERROR CSingleShip::LoadFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	CXMLElement *pHandler = pDesc->GetContentElementByTag(ON_CREATE_TAG);
 	if (pHandler)
 		{
-		m_pOnCreate = g_pUniverse->GetCC().Link(pHandler->GetContentText(0), 0, NULL);
+		m_pOnCreate = g_pUniverse->GetCC().Link(pHandler->GetContentText(0));
 		if (m_pOnCreate->IsError())
 			{
 			Ctx.sError = strPatternSubst("<OnCreate> in <Ship>: &s", m_pOnCreate->GetStringValue());
@@ -933,7 +936,7 @@ ALERROR CSingleShip::LoadFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 
 	//	Load orders
 
-	if (!ParseOrderString(pDesc->GetAttribute(ORDERS_ATTRIB), &m_iOrder, &m_OrderData))
+	if (!IShipController::ParseOrderString(pDesc->GetAttribute(ORDERS_ATTRIB), &m_iOrder, &m_OrderData))
 		{
 		Ctx.sError = strPatternSubst("Invalid order: %s", pDesc->GetAttribute(ORDERS_ATTRIB));
 		return ERR_FAIL;

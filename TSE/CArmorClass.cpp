@@ -61,6 +61,7 @@
 #define FIELD_REPAIR_COST						CONSTLIT("repairCost")
 #define FIELD_SHIELD_INTERFERENCE				CONSTLIT("shieldInterference")
 
+#define PROPERTY_ARMOR_CLASS					CONSTLIT("armorClass")
 #define PROPERTY_BLINDING_IMMUNE				CONSTLIT("blindingImmune")
 #define PROPERTY_COMPLETE_HP					CONSTLIT("completeHP")
 #define PROPERTY_COMPLETE_SET					CONSTLIT("completeSet")
@@ -74,6 +75,7 @@
 #define PROPERTY_MAX_HP							CONSTLIT("maxHP")
 #define PROPERTY_PRIME_SEGMENT					CONSTLIT("primeSegment")
 #define PROPERTY_RADIATION_IMMUNE				CONSTLIT("radiationImmune")
+#define PROPERTY_REGEN							CONSTLIT("regen")
 #define PROPERTY_REPAIR_COST					CONSTLIT("repairCost")
 #define PROPERTY_REPAIR_LEVEL					CONSTLIT("repairLevel")
 #define PROPERTY_SHATTER_IMMUNE					CONSTLIT("shatterImmune")
@@ -545,9 +547,9 @@ bool CArmorClass::AccumulatePerformance (CItemCtx &ItemCtx, SShipPerformanceCtx 
 	CInstalledArmor *pArmor = ItemCtx.GetArmor();
 	const CItemEnhancementStack &Enhancements = ItemCtx.GetEnhancements();
 
-	//	Increment total armor mass
+	//	Keep track of armor so that we can adjust ship speed
 
-	Ctx.iArmorMass += ItemCtx.GetItem().GetMassKg();
+	Ctx.Armor.Insert(ItemCtx);
 
     //  Adjust max speed.
 
@@ -841,7 +843,7 @@ Metric CArmorClass::CalcBalanceDamageAdj (CItemCtx &ItemCtx, const SScalableStat
 
 //	CalcBalanceDamageAdj
 //
-//	Calculates the balande contribution of damage adjustment. 0 = same as 
+//	Calculates the balance contribution of damage adjustment. 0 = same as 
 //	standard for level.
 
 	{
@@ -1267,6 +1269,29 @@ int CArmorClass::CalcPowerUsed (SUpdateCtx &Ctx, CSpaceObject *pSource, CInstall
 	//	Done
 
 	return iTotalPower;
+	}
+
+Metric CArmorClass::CalcRegen180 (CItemCtx &ItemCtx) const
+
+//	CalcRegen180
+//
+//	Returns the average number of HP regenerated every 180 ticks.
+//
+//	NOTE: This is used for stats purposes; the actual regeneration uses a 
+//	different algorithm.
+
+	{
+	const SScalableStats &Stats = GetScaledStats(ItemCtx);
+
+	Metric rRegen = 0.0;
+
+	if (Stats.iRegenType != regenNone)
+		rRegen = Stats.Regen.GetHPPer180(TICKS_PER_UPDATE);
+
+	const CItemEnhancementStack &Enhancements = ItemCtx.GetEnhancements();
+	rRegen += Enhancements.CalcRegen180(ItemCtx, TICKS_PER_UPDATE);
+
+	return rRegen;
 	}
 
 ALERROR CArmorClass::CreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CItemType *pType, CArmorClass **retpArmor)
@@ -1805,7 +1830,10 @@ ICCItem *CArmorClass::FindItemProperty (CItemCtx &Ctx, const CString &sName)
 
 	//	Get the property
 
-	if (strEquals(sName, PROPERTY_BLINDING_IMMUNE))
+	if (strEquals(sName, PROPERTY_ARMOR_CLASS))
+		return CC.CreateString(m_sMassClass);
+
+	else if (strEquals(sName, PROPERTY_BLINDING_IMMUNE))
 		return CC.CreateBool(IsImmune(Ctx, specialBlinding));
 
 	else if (strEquals(sName, PROPERTY_COMPLETE_HP))
@@ -1862,6 +1890,9 @@ ICCItem *CArmorClass::FindItemProperty (CItemCtx &Ctx, const CString &sName)
 	else if (strEquals(sName, PROPERTY_RADIATION_IMMUNE))
 		return CC.CreateBool(IsImmune(Ctx, specialRadiation));
 
+	else if (strEquals(sName, PROPERTY_REGEN))
+		return CC.CreateInteger(mathRound(CalcRegen180(Ctx)));
+
 	else if (strEquals(sName, PROPERTY_REPAIR_COST))
 		return CC.CreateInteger(GetRepairCost(Ctx));
 
@@ -1876,6 +1907,16 @@ ICCItem *CArmorClass::FindItemProperty (CItemCtx &Ctx, const CString &sName)
 
 	else
 		return NULL;
+	}
+
+const CString &CArmorClass::GetMassClass (CItemCtx &ItemCtx) const
+
+//	GetMassClass
+//
+//	Computes and returns the armor's mass classification.
+
+	{
+	return m_sMassClass;
 	}
 
 int CArmorClass::GetMaxHP (CItemCtx &ItemCtx, bool bForceComplete) const
@@ -1929,16 +1970,28 @@ CString CArmorClass::GetReference (CItemCtx &Ctx, const CItem &Ammo)
 //		30 hp; laser-resistant; impact-resistant
 
 	{
-	int iKg = m_pItemType->GetMassKg(Ctx);
-	int iTons = iKg / 1000;
-	int iKgExtra = iKg % 1000;
+	CString sReference;
 
-	if (iTons == 1 && iKgExtra == 0)
-		return CONSTLIT("1 ton");
-	else if (iKgExtra == 0)
-		return strPatternSubst(CONSTLIT("%d tons"), iTons);
-	else
-		return strPatternSubst(CONSTLIT("%d.%d tons"), iTons, iKgExtra / 100);
+	//	Mass
+
+	int iMassKg = m_pItemType->GetMassKg(Ctx);
+	AppendReferenceString(&sReference, CLanguage::ComposeNumber(CLanguage::numberMass, iMassKg));
+
+	//	Mass classification
+
+	CString sMassClass = g_pUniverse->GetDesignCollection().GetArmorMassDefinitions().GetMassClassLabel(m_sMassClass);
+	if (!sMassClass.IsBlank())
+		AppendReferenceString(&sReference, sMassClass);
+
+	//	Regeneration
+
+	Metric rRegen = CalcRegen180(Ctx);
+	if (rRegen > 0.0)
+		AppendReferenceString(&sReference, strPatternSubst(CONSTLIT("regen @ %s"), CLanguage::ComposeNumber(CLanguage::numberRegenRate, rRegen)));
+
+	//	Done
+
+	return sReference;
 	}
 
 bool CArmorClass::GetReferenceDamageAdj (const CItem *pItem, CSpaceObject *pInstalled, int *retiHP, int *retArray)
@@ -1972,23 +2025,25 @@ bool CArmorClass::GetReferenceSpeedBonus (CItemCtx &Ctx, int *retiSpeedBonus) co
 
 //	GetReferenceSpeedBonus
 //
-//	Returns the speed bonus/penalty (both intrinsic and due to mass).
+//	Returns the speed bonus/penalty (both intrinsic and due to mass). We return
+//	TRUE if we have a reference bonus/penalty to show. If the armor cannot be
+//	installed, we return TRUE, but a bonus of 0. If the armor does not need a
+//	speed bonus reference, we return FALSE.
 
 	{
 	int iBonus = m_iMaxSpeedInc;
 
 	//	Include adjustment for mass
 
-	CShipClass *pShipClass;
+	const CShipClass *pShipClass;
 	if (pShipClass = Ctx.GetSourceShipClass())
 		{
-		int iArmorMass = m_pItemType->GetMassKg(Ctx);
-
-		//	If this armor is too heavy to be installed in the ship class, then
-		//	we return TRUE, but speed bonus = 0.
-
-		if (iArmorMass > pShipClass->GetHullDesc().GetMaxArmorMass())
+		int iMassBonus;
+		if (!pShipClass->GetHullDesc().GetArmorLimits().CalcArmorSpeedBonus(Ctx, pShipClass->GetArmorDesc().GetCount(), &iMassBonus))
 			{
+			//	If this armor is too heavy to be installed in the ship class, then
+			//	we return TRUE, but speed bonus = 0.
+
 			if (retiSpeedBonus)
 				*retiSpeedBonus = 0;
 			return true;
@@ -1996,7 +2051,7 @@ bool CArmorClass::GetReferenceSpeedBonus (CItemCtx &Ctx, int *retiSpeedBonus) co
 
 		//	Otherwise, add to bonus
 
-		iBonus += pShipClass->CalcArmorSpeedBonus(iArmorMass * pShipClass->GetArmorDesc().GetCount());
+		iBonus += iMassBonus;
 		}
 
 	//	Done
@@ -2225,6 +2280,9 @@ ALERROR CArmorClass::OnBindDesign (SDesignLoadCtx &Ctx)
 	{
 	ALERROR error;
 
+	ASSERT(Ctx.pDesign);
+	if (Ctx.pDesign == NULL) return ERR_FAIL;
+
 	//	Compute armor damage adjustments
 
 	if (error = m_Stats.DamageAdj.Bind(Ctx, g_pUniverse->GetArmorDamageAdj(m_iDamageAdjLevel)))
@@ -2247,6 +2305,10 @@ ALERROR CArmorClass::OnBindDesign (SDesignLoadCtx &Ctx)
 
 	CItemType *pType = GetItemType();
 	pType->InitCachedEvents(evtCount, CACHED_EVENTS, m_CachedEvents);
+
+	//	Compute (and cache) the mass class
+
+	Ctx.pDesign->GetArmorMassDefinitions().OnBindArmor(Ctx, CItem(m_pItemType, 1), &m_sMassClass);
 
 	return NOERROR;
 	}

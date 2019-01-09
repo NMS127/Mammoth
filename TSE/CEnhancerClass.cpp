@@ -36,8 +36,7 @@ bool CEnhancerClass::AccumulateOldStyle (CItemCtx &Device, CInstalledDevice *pTa
 
 	//	If disabled or damaged then we do not enhance anything
 
-	if (pDevice 
-			&& (!pDevice->IsEnabled() || pDevice->IsDamaged()))
+	if (pDevice && !pDevice->IsWorking())
 		return false;
 
 	//	If the target item does not match our criteria, then no enhancement
@@ -281,7 +280,7 @@ ICCItem *CEnhancerClass::FindItemProperty (CItemCtx &Ctx, const CString &sName)
 		return CDeviceClass::FindItemProperty(Ctx, sName);
 	}
 
-int CEnhancerClass::GetPowerRating (CItemCtx &Ctx) const
+int CEnhancerClass::GetPowerRating (CItemCtx &Ctx, int *retiIdlePowerUse) const
 
 //	GetPowerRating
 //
@@ -289,6 +288,9 @@ int CEnhancerClass::GetPowerRating (CItemCtx &Ctx) const
 //	enabled or not).
 
 	{
+	if (retiIdlePowerUse)
+		*retiIdlePowerUse = 0;
+
 	const SScalableStats *pStats = GetStats(Ctx);
 	if (pStats == NULL)
 		return m_iPowerUse;
@@ -434,6 +436,11 @@ bool CEnhancerClass::OnAccumulateEnhancements (CItemCtx &Device, CInstalledArmor
 	if (pStats == NULL)
 		return false;
 
+	//	If disabled or damaged then we do not enhance anything
+
+	if (!Device.IsDeviceWorking())
+		return false;
+
 	//	New style
 
 	return pStats->Enhancements.Accumulate(Device, *pTarget->GetItem(), EnhancementIDs, pEnhancements);
@@ -449,6 +456,11 @@ bool CEnhancerClass::OnAccumulateEnhancements (CItemCtx &Device, CInstalledDevic
 	const SScalableStats *pStats = GetStats(Device);
 	if (pStats == NULL)
 		return AccumulateOldStyle(Device, pTarget, EnhancementIDs, pEnhancements);
+
+	//	If disabled or damaged then we do not enhance anything
+
+	if (!Device.IsDeviceWorking())
+		return false;
 
 	//	New style
 

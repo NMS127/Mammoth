@@ -562,6 +562,8 @@ void CBaseShipAI::FireOnOrderChanged (void)
 //	Ship's current order has changed
 
 	{
+	DEBUG_TRY
+
 	if (m_pShip->HasOnOrderChangedEvent() && !m_fInOnOrderChanged)
 		{
 		m_fInOnOrderChanged = true;
@@ -605,6 +607,8 @@ void CBaseShipAI::FireOnOrderChanged (void)
 	//	Give descendents a chance
 
 	OnOrderChanged();
+
+	DEBUG_CATCH
 	}
 
 void CBaseShipAI::FireOnOrdersCompleted (void)
@@ -930,7 +934,10 @@ bool CBaseShipAI::IsAngryAt (CSpaceObject *pObj) const
 		case IShipController::orderGuard:
 		case IShipController::orderPatrol:
 		case IShipController::orderSentry:
-			return GetCurrentOrderTarget()->IsAngryAt(pObj);
+			{
+			CSpaceObject *pBase = GetCurrentOrderTarget();
+			return (pBase && pBase->IsAngryAt(pObj));
+			}
 
 		default:
 			return false;
@@ -1362,7 +1369,7 @@ void CBaseShipAI::OnStationDestroyed (const SDestroyCtx &Ctx)
 	//	In some cases we ignore the notification because the station still
 	//	exists
 
-	DWORD dwFlags = GetOrderFlags(GetCurrentOrder());
+	DWORD dwFlags = IShipController::GetOrderFlags(GetCurrentOrder());
 	if (dwFlags & (ORDER_FLAG_DELETE_ON_STATION_DESTROYED | ORDER_FLAG_NOTIFY_ON_STATION_DESTROYED))
 		{
 		if (m_pOrderModule)
@@ -1518,7 +1525,7 @@ void CBaseShipAI::ReadFromStream (SLoadCtx &Ctx, CShip *pShip)
 		CString sCode;
 		sCode.ReadFromStream(Ctx.pStream);
 		if (!sCode.IsBlank())
-			m_pCommandCode = g_pUniverse->GetCC().Link(sCode, 0, NULL);
+			m_pCommandCode = g_pUniverse->GetCC().Link(sCode);
 		else
 			m_pCommandCode = NULL;
 		}

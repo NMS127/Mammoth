@@ -31,6 +31,7 @@
 #define PROP_TEXT_ALIGN_HORZ					CONSTLIT("textAlignHorz")
 #define PROP_UL_RADIUS							CONSTLIT("ulRadius")
 #define PROP_UR_RADIUS							CONSTLIT("urRadius")
+#define PROP_VIEWPORT_HEIGHT					CONSTLIT("viewportHeight")
 
 #define STYLE_SELECTION							CONSTLIT("selection")
 #define STYLE_SELECTION_FOCUS					CONSTLIT("selectionFocus")
@@ -54,16 +55,11 @@ CListCollectionTask::CListCollectionTask (CHumanInterface &HI,
 										  CExtensionCollection &Extensions, 
 										  CMultiverseModel &Multiverse, 
 										  CCloudService &Service, 
-										  int cxWidth,
-										  bool bNoCollectionRefresh,
-										  bool bDebugMode) : IHITask(HI), 
+										  const SOptions &Options) : IHITask(HI), 
 		m_Extensions(Extensions),
 		m_Multiverse(Multiverse),
 		m_Service(Service),
-		m_cxWidth(cxWidth),
-		m_bNoCollectionRefresh(bNoCollectionRefresh),
-		m_bDebugMode(bDebugMode),
-		m_pList(NULL)
+		m_Options(Options)
 
 //	CListCollectionTask constructor
 
@@ -94,7 +90,7 @@ void CListCollectionTask::CreateEntry (CMultiverseCatalogEntry *pCatalogEntry, i
 	int x = 0;
 	int y = 0;
 	int xText = x + ENTRY_ICON_WIDTH + ICON_SPACING_HORZ;
-	int cxText = m_cxWidth - (ENTRY_ICON_WIDTH + ICON_SPACING_HORZ);
+	int cxText = RectWidth(m_Options.rcRect) - (ENTRY_ICON_WIDTH + ICON_SPACING_HORZ);
 
 	//	Start with a sequencer
 
@@ -103,7 +99,7 @@ void CListCollectionTask::CreateEntry (CMultiverseCatalogEntry *pCatalogEntry, i
 
 	//	Add the icon
 
-	CG32bitImage *pIcon = pCatalogEntry->GetIconHandoff();
+	CG32bitImage *pIcon = CreateEntryIcon(*pCatalogEntry);
 	if (pIcon)
 		{
 		int xOffset = (ENTRY_ICON_WIDTH - pIcon->GetWidth()) / 2;
@@ -198,14 +194,27 @@ void CListCollectionTask::CreateEntry (CMultiverseCatalogEntry *pCatalogEntry, i
 	//	Add status, if necessary
 
 	CString sStatus;
+	CG32bitPixel rgbStatus;
 	switch (pCatalogEntry->GetStatus())
 		{
 		case CMultiverseCatalogEntry::statusCorrupt:
 			sStatus = CONSTLIT("Registration signature does not match.");
+			rgbStatus = VI.GetColor(colorTextDialogWarning);
 			break;
 
 		case CMultiverseCatalogEntry::statusError:
 			sStatus = pCatalogEntry->GetStatusText();
+			rgbStatus = VI.GetColor(colorTextDialogWarning);
+			break;
+
+		case CMultiverseCatalogEntry::statusPlayerDisabled:
+			sStatus = CONSTLIT("Disabled");
+			rgbStatus = VI.GetColor(colorTextNormal);
+			break;
+
+		case CMultiverseCatalogEntry::statusNotAvailable:
+			sStatus = CONSTLIT("Not loaded");
+			rgbStatus = VI.GetColor(colorTextNormal);
 			break;
 		}
 
@@ -214,7 +223,7 @@ void CListCollectionTask::CreateEntry (CMultiverseCatalogEntry *pCatalogEntry, i
 		IAnimatron *pStatus = new CAniText;
 		pStatus->SetPropertyVector(PROP_POSITION, CVector(xText, y));
 		pStatus->SetPropertyVector(PROP_SCALE, CVector(cxText, 1000));
-		pStatus->SetPropertyColor(PROP_COLOR, VI.GetColor(colorTextDialogWarning));
+		pStatus->SetPropertyColor(PROP_COLOR, rgbStatus);
 		pStatus->SetPropertyFont(PROP_FONT, &MediumFont);
 		pStatus->SetPropertyString(PROP_TEXT, sStatus);
 
@@ -250,6 +259,49 @@ void CListCollectionTask::CreateEntry (CMultiverseCatalogEntry *pCatalogEntry, i
 		*retcyHeight = Max(ENTRY_ICON_HEIGHT, y);
 	}
 
+CG32bitImage *CListCollectionTask::CreateEntryIcon (CMultiverseCatalogEntry &Entry) const
+
+//	CreateEntryIcon
+//
+//	Creates an appropriate icon for the given entry. Caller is responsible for
+//	freeing the result.
+
+	{
+	//	Get the icon for the extension or the generic icon.
+
+	CG32bitImage *pIcon = Entry.GetIcon();
+	if (pIcon == NULL)
+		pIcon = m_Options.pGenericIcon;
+	if (pIcon == NULL)
+		return NULL;
+
+	//	In some cases we need to gray out the icon
+
+	switch (Entry.GetStatus())
+		{
+		//	For disabled, etc., we gray out the icon
+
+		case CMultiverseCatalogEntry::statusCorrupt:
+		case CMultiverseCatalogEntry::statusDownloadInProgress:
+		case CMultiverseCatalogEntry::statusError:
+		case CMultiverseCatalogEntry::statusNotAvailable:
+		case CMultiverseCatalogEntry::statusPlayerDisabled:
+		case CMultiverseCatalogEntry::statusUnknown:
+			{
+			CG32bitImage *pNewIcon = new CG32bitImage;
+			pNewIcon->Create(pIcon->GetWidth(), pIcon->GetHeight(), pIcon->GetAlphaType());
+			CGDraw::BltGray(*pNewIcon, 0, 0, *pIcon, 0, 0, pIcon->GetWidth(), pIcon->GetHeight(), 0x80);
+
+			return pNewIcon;
+			}
+
+		//	Otherwise, normal icon
+
+		default:
+			return new CG32bitImage(*pIcon);
+		}
+	}
+
 ALERROR CListCollectionTask::OnExecute (ITaskProcessor *pProcessor, CString *retsResult)
 
 //	OnExecute
@@ -257,51 +309,51 @@ ALERROR CListCollectionTask::OnExecute (ITaskProcessor *pProcessor, CString *ret
 //	Execute the task
 	
 	{
-	ALERROR error;
 	int i;
 
 	const CVisualPalette &VI = m_HI.GetVisuals();
 
-	//	Ask the Hexarc service to refresh the collection
+	//	Get the list of entries from the Multiverse and update the status from 
+	//	the extensions.
 
-	if (!m_bNoCollectionRefresh)
-		{
-		if (error = m_Service.LoadUserCollection(pProcessor, m_Multiverse, retsResult))
-			return error;
-		}
+	CExtensionCollection::SCollectionStatusOptions Options;
+	Options.cxIconSize = ENTRY_ICON_WIDTH;
+	Options.cyIconSize = ENTRY_ICON_HEIGHT;
 
-	//	Get the list of entries from the Multiverse
-
-	CMultiverseCollection Collection;
-	if (error = m_Multiverse.GetCollection(&Collection))
-		{
-		*retsResult = ERR_GET_COLLECTION_FAILED;
-		return ERR_FAIL;
-		}
-
-	//	Ask the local collection to give us the status for all the entries
-	//	in the collection.
-
-	m_Extensions.UpdateCollectionStatus(Collection, ENTRY_ICON_WIDTH, ENTRY_ICON_HEIGHT);
+	m_Collection = m_Multiverse.GetCollection();
+	m_Extensions.UpdateCollectionStatus(m_Collection, Options);
 
 	//	Sort the entries
 
 	TSortMap<CString, CMultiverseCatalogEntry *> SortedList;
-	for (i = 0; i < Collection.GetCount(); i++)
+	for (i = 0; i < m_Collection.GetCount(); i++)
 		{
-		CMultiverseCatalogEntry *pEntry = Collection.GetEntry(i);
+		CMultiverseCatalogEntry *pEntry = &m_Collection[i];
 
 		//	Skip libraries unless in debug mode
 
-		if (!m_bDebugMode && pEntry->GetType() == extLibrary)
+		if (!m_Options.bShowLibraries && pEntry->GetType() == extLibrary)
 			continue;
 
 		//	Sort key
 
-		CString sSortKey = strPatternSubst(CONSTLIT("%s:%s"),
-				(pEntry->GetType() == extAdventure ? CONSTLIT("01") : (pEntry->GetType() == extExtension ? CONSTLIT("02") : CONSTLIT("03"))),
-				pEntry->GetName()
-				);
+		CString sDomain;
+		if (IsOfficialUNID(pEntry->GetUNID()))
+			sDomain = CONSTLIT("01");
+		else if (IsRegisteredUNID(pEntry->GetUNID()))
+			sDomain = CONSTLIT("02");
+		else
+			sDomain = CONSTLIT("03");
+
+		CString sType;
+		if (pEntry->GetType() == extAdventure)
+			sType = CONSTLIT("01");
+		else if (pEntry->GetType() == extExtension)
+			sType = CONSTLIT("02");
+		else
+			sType = CONSTLIT("03");
+
+		CString sSortKey = strPatternSubst(CONSTLIT("%s:%s:%s"), sDomain, sType, pEntry->GetName());
 
 		//	Add
 
@@ -318,6 +370,7 @@ ALERROR CListCollectionTask::OnExecute (ITaskProcessor *pProcessor, CString *ret
 
 	//	Loop over all entries in the collection and add them to the list
 
+	CString sSelection;
 	int y = MAJOR_PADDING_TOP;
 	for (i = 0; i < SortedList.GetCount(); i++)
 		{
@@ -329,9 +382,26 @@ ALERROR CListCollectionTask::OnExecute (ITaskProcessor *pProcessor, CString *ret
 		int cyHeight;
 		CreateEntry(pCatalogEntry, y, &pEntry, &cyHeight);
 
-		m_pList->AddEntry(strFromInt(pCatalogEntry->GetUNID()), pEntry);
+		CString sID = strFromInt(pCatalogEntry->GetUNID());
+		m_pList->AddEntry(sID, pEntry);
 		y += cyHeight + INTER_LINE_SPACING;
+
+		//	If we want to select this entry, then remember the index
+
+		if (m_Options.dwSelectUNID && pCatalogEntry->GetUNID() == m_Options.dwSelectUNID)
+			sSelection = sID;
 		}
+
+	//	Position the list
+
+	m_pList->SetPropertyVector(PROP_POSITION, CVector(m_Options.rcRect.left, m_Options.rcRect.top));
+	m_pList->SetPropertyVector(PROP_SCALE, CVector(RectWidth(m_Options.rcRect), RectHeight(m_Options.rcRect)));
+	m_pList->SetPropertyMetric(PROP_VIEWPORT_HEIGHT, (Metric)RectHeight(m_Options.rcRect));
+
+	//	Select
+
+	if (!sSelection.IsBlank())
+		m_pList->SetSelection(sSelection);
 
 	g_pUniverse->SetLogImageLoad(true);
 

@@ -160,6 +160,7 @@ class CAIBehaviorCtx
 		void Undock (CShip *pShip);
 
 	private:
+		void DebugAIOutput (CShip *pShip, LPCSTR pText);
 		void CalcEscortFormation (CShip *pShip, CSpaceObject *pLeader, CVector *retvPos, CVector *retvVel, int *retiFacing);
 		bool CalcFlockingFormationCloud (CShip *pShip, CSpaceObject *pLeader, Metric rFOVRange, Metric rSeparationRange, CVector *retvPos, CVector *retvVel, int *retiFacing);
 		bool CalcFlockingFormationRandom (CShip *pShip, CSpaceObject *pLeader, CVector *retvPos, CVector *retvVel, int *retiFacing);
@@ -209,7 +210,7 @@ class CAIBehaviorCtx
 		DWORD m_fHasMultiplePrimaries:1;		//	TRUE if ship has multiple primary weapons (non-launchers)
 		DWORD m_fFreeNavPath:1;					//	TRUE if we own the nav path object
 		DWORD m_fHasAvoidPotential:1;			//	TRUE if there is something to avoid
-		DWORD m_fBestWeaponIsBackwards:1;		//	TRUE if the best weapon does not face forward
+		DWORD m_fSpare4:1;
 		DWORD m_fSpare5:1;
 		DWORD m_fSpare6:1;
 		DWORD m_fSpare7:1;

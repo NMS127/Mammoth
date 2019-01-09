@@ -95,10 +95,16 @@ class CDeviceSystem
 		int CalcSlotsInUse (int *retiWeaponSlots, int *retiNonWeapon) const;
 		void CleanUp (void);
 		CInstalledDevice *FindDevice (const CItem &Item);
+
+		static constexpr DWORD FLAG_VALIDATE_ITEM =	0x00000001;
+		static constexpr DWORD FLAG_MATCH_BY_TYPE =	0x00000002;
+		int FindDeviceIndex (const CItem &Item, DWORD dwFlags = 0) const;
+
 		int FindFreeSlot (void);
 		int FindNamedIndex (const CItem &Item) const;
 		int FindNextIndex (CSpaceObject *pObj, int iStart, ItemCategories Category, int iDir = 1) const;
 		int FindRandomIndex (bool bEnabledOnly) const;
+		bool FindWeaponByItem (const CItem &Item, int *retiIndex = NULL, int *retiVariant = NULL) const;
 		inline int GetCount (void) const { return m_Devices.GetCount(); }
 		int GetCountByID (const CString &sID) const;
 		inline CInstalledDevice &GetDevice (int iIndex) { return m_Devices[iIndex]; }
@@ -553,6 +559,7 @@ class CReactorDesc
         CString GetFuelCriteriaString (void) const;
         void GetFuelLevel (int *retiMin, int *retiMax) const;
         inline int GetMaxPower (void) const { return m_iMaxPower; }
+        ALERROR InitFromShipClassXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, DWORD dwUNID);
         ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, DWORD dwUNID, bool bShipClass = false);
         ALERROR InitScaled (SDesignLoadCtx &Ctx, const CReactorDesc &Src, int iBaseLevel, int iScaledLevel);
         bool IsFuelCompatible (const CItem &FuelItem) const;
@@ -592,6 +599,8 @@ class CReactorDesc
 class CPowerConsumption
 	{
 	public:
+		static constexpr int DEFAULT_LIFESUPPORT_POWER_USE = 5;
+
 		CPowerConsumption (void) :
 				m_rFuelLeft(0.0),
 				m_iPowerDrain(0),
@@ -636,23 +645,13 @@ class CPowerConsumption
 struct SShipPerformanceCtx
     {
     SShipPerformanceCtx (CShipClass *pClassArg) :
-			pClass(pClassArg),
-            pShip(NULL),
-            rSingleArmorFraction(0.0),
-			iArmorMass(0),
-            rOperatingSpeedAdj(1.0),
-			rArmorSpeedBonus(0.0),
-			rMaxSpeedLimit(LIGHT_SPEED),
-            bDriveDamaged(false),
-            CargoDesc(0),
-            iMaxCargoSpace(0),
-			bShieldInterference(false)
+			pClass(pClassArg)
         { }
 
-	CShipClass *pClass;						//	Class (required)
-    CShip *pShip;                           //  Target ship (may be NULL, if computing class perf)
-    Metric rSingleArmorFraction;            //  Fraction of all armor segments represented by 1 segment (= 1/segment-count)
-	int iArmorMass;							//	Total mass of all armor segments (kg)
+	CShipClass *pClass = NULL;				//	Class (required)
+    CShip *pShip = NULL;					//  Target ship (may be NULL, if computing class perf)
+    Metric rSingleArmorFraction = 0.0;		//  Fraction of all armor segments represented by 1 segment (= 1/segment-count)
+	TArray<CItemCtx> Armor;					//	Armor installed on ship
 
 	CAbilitySet Abilities;					//	Equipment installed
 
@@ -661,16 +660,16 @@ struct SShipPerformanceCtx
 	CReactorDesc ReactorDesc;				//	Reactor descriptor
 
     CDriveDesc DriveDesc;                   //  Drive descriptor
-	Metric rOperatingSpeedAdj;				//	Adjustment to speed based on operations (1.0 = normal)
-	Metric rArmorSpeedBonus;				//	Increase/decrease in speed
-	Metric rMaxSpeedLimit;					//	Bonuses should not increase speed above this limit
-	bool bDriveDamaged;                     //  If TRUE, cut thrust in half
+	Metric rOperatingSpeedAdj = 1.0;		//	Adjustment to speed based on operations (1.0 = normal)
+	Metric rArmorSpeedBonus = 0.0;			//	Increase/decrease in speed
+	Metric rMaxSpeedLimit = LIGHT_SPEED;	//	Bonuses should not increase speed above this limit
+	bool bDriveDamaged = false;				//  If TRUE, cut thrust in half
 
     CCargoDesc CargoDesc;                   //  Cargo space descriptor
-    int iMaxCargoSpace;                     //  Max cargo space limit imposed by class
+    int iMaxCargoSpace = 0;					//  Max cargo space limit imposed by class
                                             //      0 = no limit
 
-	bool bShieldInterference;				//	Meteorsteel (or something) is interfering
+	bool bShieldInterference = false;		//	Meteorsteel (or something) is interfering
     };
 
 class CShipPerformanceDesc
@@ -684,8 +683,9 @@ class CShipPerformanceDesc
 		inline const CAbilitySet &GetAbilities (void) const { return m_Abilities; }
         inline const CCargoDesc &GetCargoDesc (void) const { return m_CargoDesc; }
         inline const CDriveDesc &GetDriveDesc (void) const { return m_DriveDesc; }
+        inline const CIntegralRotationDesc &GetIntegralRotationDesc (void) const { return m_IntegralRotationDesc; }
         inline const CReactorDesc &GetReactorDesc (void) const { return m_ReactorDesc; }
-        inline const CIntegralRotationDesc &GetRotationDesc (void) const { return m_RotationDesc; }
+        inline const CRotationDesc &GetRotationDesc (void) const { return m_RotationDesc; }
 		inline bool HasShieldInterference (void) const { return (m_fShieldInterference ? true : false); }
         void Init (SShipPerformanceCtx &Ctx);
 		inline bool IsEmpty (void) const { return (m_fInitialized ? false : true); }
@@ -696,12 +696,13 @@ class CShipPerformanceDesc
         inline CCargoDesc &GetCargoDesc (void) { return m_CargoDesc; }
         inline CDriveDesc &GetDriveDesc (void) { return m_DriveDesc; }
         inline CReactorDesc &GetReactorDesc (void) { return m_ReactorDesc; }
-        inline CIntegralRotationDesc &GetRotationDesc (void) { return m_RotationDesc; }
+        inline CIntegralRotationDesc &GetIntegralRotationDesc (void) { return m_IntegralRotationDesc; }
 
 		inline static const CShipPerformanceDesc &Null (void) { return m_Null; }
 
     private:
-        CIntegralRotationDesc m_RotationDesc;
+		CRotationDesc m_RotationDesc;
+        CIntegralRotationDesc m_IntegralRotationDesc;
 		CReactorDesc m_ReactorDesc;
         CDriveDesc m_DriveDesc;
         CCargoDesc m_CargoDesc;

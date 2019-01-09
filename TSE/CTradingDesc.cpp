@@ -438,7 +438,7 @@ int CTradingDesc::ComputePrice (STradeServiceCtx &Ctx, const SServiceDesc &Commo
 	//	Get the raw price from the item
 
 	int iBasePrice;
-	CEconomyType *pBaseEconomy;
+	const CEconomyType *pBaseEconomy;
 	switch (Commodity.iService)
 		{
 		case serviceRepairArmor:
@@ -1012,6 +1012,39 @@ bool CTradingDesc::FindServiceToOverride (const SServiceDesc &NewService, int *r
 	return false;
 	}
 
+bool CTradingDesc::HasConsumerService (void) const
+
+//	HasConsumerService
+//
+//	Returns TRUE if we have at least one service on which the player can spend
+//	money. Excludes donations, balance of trade services, etc.
+
+	{
+	for (int i = 0; i < m_List.GetCount(); i++)
+		switch (m_List[i].iService)
+			{
+			case serviceBuy:
+			case serviceSell:
+			case serviceRefuel:
+			case serviceRepairArmor:
+			case serviceReplaceArmor:
+			case serviceInstallDevice:
+			case serviceRemoveDevice:
+			case serviceUpgradeDevice:
+			case serviceEnhanceItem:
+			case serviceRepairItem:
+			case serviceCustom:
+			case serviceBuyShip:
+			case serviceSellShip:
+				return true;
+
+			default:
+				break;
+			}
+	
+	return false;
+	}
+
 bool CTradingDesc::HasSameCriteria (const SServiceDesc &S1, const SServiceDesc &S2)
 
 //	HasSameCriteria
@@ -1366,6 +1399,7 @@ void CTradingDesc::GetServiceInfo (int iIndex, SServiceInfo &Result) const
 	Result.iPriceAdj = Service.PriceAdj.EvalAsInteger(NULL);
 
 	Result.bInventoryAdj = ((Service.dwFlags & FLAG_INVENTORY_ADJ) ? true : false);
+	Result.bUpgradeInstallOnly = ((Service.dwFlags & FLAG_UPGRADE_INSTALL_ONLY) ? true : false);
 	}
 
 bool CTradingDesc::GetServiceTypeInfo (ETradeServiceTypes iService, SServiceTypeInfo &Info) const
@@ -1422,7 +1456,7 @@ bool CTradingDesc::GetServiceTypeInfo (ETradeServiceTypes iService, SServiceType
 	return Info.bAvailable;
     }
 
-bool CTradingDesc::HasService (ETradeServiceTypes iService) const
+bool CTradingDesc::HasService (ETradeServiceTypes iService, const SHasServiceOptions &Options) const
 
 //	HasService
 //
@@ -1440,6 +1474,13 @@ bool CTradingDesc::HasService (ETradeServiceTypes iService) const
 			int iPriceAdj = m_List[i].PriceAdj.EvalAsInteger(NULL, &sPrefix);
 			if (strEquals(sPrefix, UNAVAILABLE_PREFIX))
 				continue;
+
+			//	Make sure we match the options
+
+			if (!MatchesHasServiceOptions(Options, m_List[i]))
+				continue;
+
+			//	Found it!
 
             return true;
 			}
@@ -1531,6 +1572,52 @@ bool CTradingDesc::Matches (CDesignType *pType, const SServiceDesc &Commodity) c
 	return pType->MatchesCriteria(Commodity.TypeCriteria);
 	}
 
+bool CTradingDesc::MatchesHasServiceOptions (const SHasServiceOptions &Options, const SServiceDesc &Service) const
+
+//	MatchesHasServiceOptions
+//
+//	Returns TRUE if the given service matches the set of options.
+
+	{
+	//	If we only want full install, then make sure this service does
+	//	not require an upgrade
+
+	if ((Options.bFullInstallOnly)
+			&& (Service.dwFlags & FLAG_UPGRADE_INSTALL_ONLY))
+		return false;
+
+	//	Match criteria
+
+	switch (Service.iService)
+		{
+		case serviceBuy:
+		case serviceSell:
+		case serviceAcceptDonations:
+		case serviceRefuel:
+		case serviceRepairArmor:
+		case serviceReplaceArmor:
+		case serviceInstallDevice:
+		case serviceRemoveDevice:
+		case serviceUpgradeDevice:
+		case serviceEnhanceItem:
+		case serviceRepairItem:
+			{
+			if (!Options.ItemCriteria.IsEmpty())
+				{
+				if (Service.pItemType && !CItem(Service.pItemType, 1).MatchesCriteria(Options.ItemCriteria))
+					return false;
+				else if (!Service.ItemCriteria.Intersects(Options.ItemCriteria))
+					return false;
+				}
+			break;
+			}
+		}
+
+	//	Success!
+
+	return true;
+	}
+
 void CTradingDesc::OnCreate (CSpaceObject *pObj)
 
 //	OnCreate
@@ -1588,6 +1675,32 @@ void CTradingDesc::OnUpdate (CSpaceObject *pObj)
 	DEBUG_CATCH
 	}
 
+bool CTradingDesc::ParseHasServiceOptions (ICCItem *pOptions, SHasServiceOptions &retOptions)
+
+//	ParseHasServiceFlags
+//
+//	Returns flags for HasService.
+
+	{
+	//	Short-circuit
+
+	retOptions = SHasServiceOptions();
+	if (pOptions == NULL || pOptions->IsNil())
+		return true;
+
+	//	Parse flags
+
+	retOptions.bFullInstallOnly = pOptions->GetBooleanAt(CONSTLIT("fullInstallOnly"));
+
+	//	Item criteria
+
+	CString sCriteria = pOptions->GetStringAt(CONSTLIT("itemCriteria"));
+	if (!sCriteria.IsBlank())
+		CItem::ParseCriteria(sCriteria, &retOptions.ItemCriteria);
+
+	return true;
+	}
+
 ETradeServiceTypes CTradingDesc::ParseService (const CString &sService)
 
 //	ParseService
@@ -1598,7 +1711,8 @@ ETradeServiceTypes CTradingDesc::ParseService (const CString &sService)
 	int i;
 
 	for (i = 0; i < serviceCount; i++)
-		if (strEquals(sService, CString(SERVICE_DATA[i].pszName)))
+		if (strEquals(sService, CString(SERVICE_DATA[i].pszName))
+				|| strEquals(sService, CString(SERVICE_DATA[i].pszTag)))
 			return (ETradeServiceTypes)i;
 
 	return serviceNone;
@@ -1762,6 +1876,14 @@ void CTradingDesc::RefreshInventory (CSpaceObject *pObj, int iPercent)
 	int i, j;
 	bool bCargoChanged = false;
 
+	//	Notify any dock screens that we might modify an item
+	//	Null item means preserve current selection.
+
+	IDockScreenUI::SModifyItemCtx ModifyCtx;
+	pObj->OnModifyItemBegin(ModifyCtx, CItem());
+
+	//	Add
+
 	for (i = 0; i < m_List.GetCount(); i++)
 		{
 		SServiceDesc &Service = m_List[i];
@@ -1826,7 +1948,10 @@ void CTradingDesc::RefreshInventory (CSpaceObject *pObj, int iPercent)
 		}
 
 	if (bCargoChanged)
-		pObj->ItemsModified();
+		{
+		pObj->OnComponentChanged(comCargo);
+		pObj->OnModifyItemComplete(ModifyCtx, CItem());
+		}
 
 	DEBUG_CATCH
 	}

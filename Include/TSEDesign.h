@@ -9,6 +9,7 @@ class CCommunicationsHandler;
 class CCompositeImageDesc;
 class CCreatePainterCtx;
 class CCurrencyAndValue;
+class CDesignCollection;
 class CDockScreen;
 class CDockingPorts;
 class CDynamicDesignTable;
@@ -176,13 +177,16 @@ class CDesignType
 			{
 			evtCanInstallItem			= 0,
 			evtCanRemoveItem			= 1,
-			evtOnGlobalTypesInit		= 2,
-			evtOnObjDestroyed			= 3,
-			evtOnSystemObjAttacked		= 4,
-			evtOnSystemWeaponFire		= 5,
-			evtOnUpdate					= 6,
+			evtOnDestroyCheck			= 2,
+			evtOnGlobalTypesInit		= 3,
+			evtOnObjDestroyed			= 4,
+			evtOnSystemObjAttacked		= 5,
+			evtOnSystemStarted			= 6,
+			evtOnSystemStopped			= 7,
+			evtOnSystemWeaponFire		= 8,
+			evtOnUpdate					= 9,
 
-			evtCount					= 7,
+			evtCount					= 10,
 			};
 
         struct SMapDescriptionCtx
@@ -204,15 +208,14 @@ class CDesignType
 			size_t dwWreckGraphicsMemory = 0;
 			};
 
-		CDesignType (void);
 		void CreateClone (CDesignType **retpType);
 		static ALERROR CreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CDesignType **retpType);
 
 		ALERROR BindDesign (SDesignLoadCtx &Ctx);
-		ALERROR ComposeLoadError (SDesignLoadCtx &Ctx, const CString &sError);
+		ALERROR ComposeLoadError (SDesignLoadCtx &Ctx, const CString &sError) const;
 		inline ALERROR FinishBindDesign (SDesignLoadCtx &Ctx) { return OnFinishBindDesign(Ctx); }
 		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, bool bIsOverride = false);
-		bool IsIncluded (const TArray<DWORD> &ExtensionsIncluded) const;
+		bool IsIncluded (DWORD dwAPIVersion, const TArray<DWORD> &ExtensionsIncluded) const;
 		bool MatchesCriteria (const CDesignTypeCriteria &Criteria);
 		void MergeType (CDesignType *pSource);
 		ALERROR PrepareBindDesign (SDesignLoadCtx &Ctx);
@@ -241,16 +244,17 @@ class CDesignType
 		void FireCustomEvent (const CString &sEvent, ECodeChainEvents iEvent = eventNone, ICCItem *pData = NULL, ICCItem **retpResult = NULL);
 		bool FireGetCreatePos (CSpaceObject *pBase, CSpaceObject *pTarget, CSpaceObject **retpGate, CVector *retvPos);
 		void FireGetGlobalAchievements (CGameStats &Stats);
-		bool FireGetGlobalDockScreen (const SEventHandlerDesc &Event, CSpaceObject *pObj, CString *retsScreen = NULL, ICCItemPtr *retpData = NULL, int *retiPriority = NULL);
+		bool FireGetGlobalDockScreen (const SEventHandlerDesc &Event, const CSpaceObject *pObj, CDockScreenSys::SSelector &Selector) const;
 		bool FireGetGlobalPlayerPriceAdj (const SEventHandlerDesc &Event, STradeServiceCtx &ServiceCtx, ICCItem *pData, int *retiPriceAdj);
 		int FireGetGlobalResurrectPotential (void);
 		void FireObjCustomEvent (const CString &sEvent, CSpaceObject *pObj, ICCItem *pData = NULL, ICCItem **retpResult = NULL);
-		ALERROR FireOnGlobalDockPaneInit (const SEventHandlerDesc &Event, void *pScreen, DWORD dwScreenUNID, const CString &sScreen, const CString &sPane, CString *retsError);
+		ALERROR FireOnGlobalDockPaneInit (const SEventHandlerDesc &Event, void *pScreen, DWORD dwScreenUNID, const CString &sScreen, const CString &sScreenName, const CString &sPane, ICCItem *pData, CString *retsError);
 		void FireOnGlobalEndDiagnostics (const SEventHandlerDesc &Event);
 		void FireOnGlobalIntroCommand (const SEventHandlerDesc &Event, const CString &sCommand);
 		void FireOnGlobalIntroStarted (const SEventHandlerDesc &Event);
 		void FireOnGlobalMarkImages (const SEventHandlerDesc &Event);
 		void FireOnGlobalObjDestroyed (const SEventHandlerDesc &Event, SDestroyCtx &Ctx);
+		bool FireOnGlobalObjGateCheck (const SEventHandlerDesc &Event, CSpaceObject *pObj, CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGateObj);
 		void FireOnGlobalPlayerBoughtItem (const SEventHandlerDesc &Event, CSpaceObject *pSellerObj, const CItem &Item, const CCurrencyAndValue &Price);
 		ALERROR FireOnGlobalPlayerChangedShips (CSpaceObject *pOldShip, CString *retsError = NULL);
 		ALERROR FireOnGlobalPlayerEnteredSystem (CString *retsError = NULL);
@@ -271,6 +275,7 @@ class CDesignType
 		void FireOnRandomEncounter (CSpaceObject *pObj = NULL);
 		size_t GetAllocMemoryUsage (void) const;
 		inline DWORD GetAPIVersion (void) const { return m_dwVersion; }
+		inline const CArmorMassDefinitions &GetArmorMassDefinitions (void) const { return (m_pExtra ? m_pExtra->ArmorDefinitions : CArmorMassDefinitions::Null); }
 		inline const CString &GetAttributes (void) const { return m_sAttributes; }
 		inline CString GetDataField (const CString &sField) const { CString sValue; FindDataField(sField, &sValue); return sValue; }
 		inline int GetDataFieldInteger (const CString &sField) { CString sValue; if (FindDataField(sField, &sValue)) return strToInt(sValue, 0, NULL); else return 0; }
@@ -297,8 +302,10 @@ class CDesignType
 		inline CXMLElement *GetXMLElement (void) const { return m_pXML; }
 		TSortMap<DWORD, DWORD> GetXMLMergeFlags (void) const;
 		bool HasAttribute (const CString &sAttrib) const;
+		inline bool HasCustomMapDescLanguage (void) const { return (m_fHasCustomMapDescLang ? true : false); }
 		inline bool HasEvents (void) const { return !m_Events.IsEmpty() || (m_pInheritFrom && m_pInheritFrom->HasEvents()); }
 		bool HasLanguageBlock (void) const;
+		bool HasLanguageEntry (const CString &sID) const;
 		inline bool HasLiteralAttribute (const CString &sAttrib) const { return ::HasModifier(m_sAttributes, sAttrib); }
 		bool HasSpecialAttribute (const CString &sAttrib) const;
         inline ICCItemPtr IncGlobalData (const CString &sAttrib, ICCItem *pValue = NULL) { return SetExtra()->GlobalData.IncData(sAttrib, pValue); }
@@ -307,8 +314,7 @@ class CDesignType
 		inline bool IsClone (void) const { return m_bIsClone; }
 		inline bool IsMerged (void) const { return m_bIsMerged; }
 		inline bool IsModification (void) const { return m_bIsModification; }
-		inline bool IsObsoleteAt (DWORD dwAPIVersion) const { return (m_dwObsoleteVersion > 0 && dwAPIVersion >= m_dwObsoleteVersion); }
-		inline bool IsOptional (void) const { return (m_dwObsoleteVersion > 0) || (m_pExtra && (m_pExtra->Excludes.GetCount() > 0 || m_pExtra->Extends.GetCount() > 0)); }
+		inline bool IsOptional (void) const { return (m_dwObsoleteVersion > 0) || (m_dwMinVersion > 0) || (m_pExtra && (m_pExtra->Excludes.GetCount() > 0 || m_pExtra->Extends.GetCount() > 0)); }
 		inline void MarkImages (void) { OnMarkImages(); }
 		inline void SetGlobalData (const CString &sAttrib, ICCItem *pData) { SetExtra()->GlobalData.SetData(sAttrib, pData); }
 		inline void SetInheritFrom (CDesignType *pType) { m_pInheritFrom = pType; }
@@ -328,7 +334,7 @@ class CDesignType
 		virtual void Delete (void) { delete this; }
 		virtual bool FindDataField (const CString &sField, CString *retsValue) const;
 		virtual CCommunicationsHandler *GetCommsHandler (void) { return NULL; }
-		virtual CEconomyType *GetEconomyType (void) const;
+		virtual const CEconomyType *GetEconomyType (void) const;
 		virtual CCurrencyAndValue GetTradePrice (CSpaceObject *pObj = NULL, bool bActual = false) const;
 		virtual CTradingDesc *GetTradingDesc (void) const { return NULL; }
         virtual const CCompositeImageDesc &GetTypeImage (void) const;
@@ -342,7 +348,7 @@ class CDesignType
 		ICCItem *FindBaseProperty (CCodeChainCtx &Ctx, const CString &sProperty) const;
 		bool IsValidLoadXML (const CString &sTag);
 		void ReadGlobalData (SUniverseLoadCtx &Ctx);
-		void ReportEventError (const CString &sEvent, ICCItem *pError);
+		void ReportEventError (const CString &sEvent, ICCItem *pError) const;
 
 		//	CDesignType overrides
 		virtual ~CDesignType (void);
@@ -385,6 +391,7 @@ class CDesignType
 			CAttributeDataBlock InitGlobalData;			//	Initial global data
 			CLanguageDataBlock Language;				//	Language data
 			CXMLElement *pLocalScreens = NULL;			//	Local dock screen
+			CArmorMassDefinitions ArmorDefinitions;		//	Armor mass definitions
 			CDisplayAttributeDefinitions DisplayAttribs;	//	Display attribute definitions
 
 			SEventHandlerDesc EventsCache[evtCount];	//	Cached events
@@ -398,24 +405,27 @@ class CDesignType
 		bool TranslateVersion2 (CSpaceObject *pObj, const CString &sID, ICCItem **retpResult) const;
 		SExtra *SetExtra (void) { if (!m_pExtra) m_pExtra.Set(new SExtra); return m_pExtra; }
 
-		DWORD m_dwUNID;
-		CExtension *m_pExtension;				//	Extension
-		DWORD m_dwVersion;						//	Extension API version
-		DWORD m_dwObsoleteVersion;				//	API version on which this type is obsolete (0 = not obsolete)
-		CXMLElement *m_pXML;					//	Optional XML for this type
+		DWORD m_dwUNID = 0;
+		CExtension *m_pExtension = NULL;				//	Extension
+		DWORD m_dwVersion = 0;							//	Extension API version
+		DWORD m_dwObsoleteVersion = 0;					//	API version on which this type is obsolete (0 = not obsolete)
+		DWORD m_dwMinVersion = 0;						//	Exclude if using an API version lower than this (0 = always include)
+		CXMLElement *m_pXML = NULL;						//	Optional XML for this type
 
-		DWORD m_dwInheritFrom;					//	Inherit from this type
-		CDesignType *m_pInheritFrom;			//	Inherit from this type
+		DWORD m_dwInheritFrom = 0;						//	Inherit from this type
+		CDesignType *m_pInheritFrom = NULL;				//	Inherit from this type
 
-		CString m_sAttributes;					//	Type attributes
-		CEventHandler m_Events;					//	Event handlers
+		CString m_sAttributes;							//	Type attributes
+		CEventHandler m_Events;							//	Event handlers
 
-		TUniquePtr<SExtra> m_pExtra;			//	Extra type stuff (not all types need this, so we only
-												//		allocate when necessary).
+		TUniquePtr<SExtra> m_pExtra;					//	Extra type stuff (not all types need this, so we only
+														//		allocate when necessary).
 
-		bool m_bIsModification;					//	TRUE if this modifies the type it overrides
-		bool m_bIsClone;						//	TRUE if we cloned this from another type
-		bool m_bIsMerged;						//	TRUE if we created this type by merging (inheritance)
+		bool m_bIsModification = false;					//	TRUE if this modifies the type it overrides
+		bool m_bIsClone = false;						//	TRUE if we cloned this from another type
+		bool m_bIsMerged = false;						//	TRUE if we created this type by merging (inheritance)
+
+		DWORD m_fHasCustomMapDescLang:1;				//	Cached for efficiency
 	};
 
 template <class CLASS> class CDesignTypeRef
@@ -535,18 +545,18 @@ class CEconomyTypeRef
 	public:
 		CEconomyTypeRef (void) : m_pType(NULL) { }
 
-		inline operator CEconomyType *() const { return m_pType; }
-		inline CEconomyType * operator->() const { return m_pType; }
+		inline operator const CEconomyType *() const { return m_pType; }
+		inline const CEconomyType * operator->() const { return m_pType; }
 
 		ALERROR Bind (SDesignLoadCtx &Ctx);
 		inline bool IsEmpty (void) const { return (m_sUNID.IsBlank() && m_pType == NULL); }
 		void LoadUNID (const CString &sUNID) { m_sUNID = sUNID; }
 		void Set (DWORD dwUNID);
-		inline void Set (CEconomyType *pType) { m_pType = pType; }
+		inline void Set (const CEconomyType *pType) { m_pType = pType; }
 
 	private:
 		CString m_sUNID;
-		CEconomyType *m_pType;
+		const CEconomyType *m_pType;
 	};
 
 class CEffectCreatorRef : public CDesignTypeRef<CEffectCreator>
@@ -834,6 +844,7 @@ class CExtension
 		void CleanUp (void);
 		void CreateIcon (int cxWidth, int cyHeight, CG32bitImage **retpIcon) const;
 		ALERROR ExecuteGlobals (SDesignLoadCtx &Ctx);
+		bool IsLibraryInUse (DWORD dwUNID) const;
 		inline CAdventureDesc *GetAdventureDesc (void) const { return m_pAdventureDesc; }
 		inline DWORD GetAPIVersion (void) const { return m_dwAPIVersion; }
 		inline DWORD GetAutoIncludeAPIVersion (void) const { return m_dwAutoIncludeAPIVersion; }
@@ -860,6 +871,7 @@ class CExtension
 		inline DWORD GetUNID (void) const { return m_dwUNID; }
 		inline const CString &GetVersion (void) const { return m_sVersion; }
 		size_t GetXMLMemoryUsage (void) const;
+		inline bool HasIcon (void) const { CG32bitImage *pIcon = GetCoverImage(); return (pIcon && pIcon->GetWidth() > 0 && pIcon->GetHeight() > 0); }
 		inline bool IsAutoInclude (void) const { return m_bAutoInclude; }
 		inline bool IsDebugOnly (void) const { return m_bDebugOnly; }
 		inline bool IsDisabled (void) const { return m_bDisabled; }
@@ -991,6 +1003,12 @@ class CExtensionCollection
 			FLAG_FORCE_COMPATIBILITY_LIBRARY = 0x00000800,
 			};
 
+		struct SCollectionStatusOptions
+			{
+			int cxIconSize = 300;
+			int cyIconSize = 150;
+			};
+
 		CExtensionCollection (void);
 		~CExtensionCollection (void);
 
@@ -1000,6 +1018,7 @@ class CExtensionCollection
 		ALERROR ComputeAvailableExtensions (CExtension *pAdventure, DWORD dwFlags, const TArray<DWORD> &Extensions, TArray<CExtension *> *retList, CString *retsError);
 		ALERROR ComputeBindOrder (CExtension *pAdventure, const TArray<CExtension *> &DesiredExtensions, DWORD dwFlags, TArray<CExtension *> *retList, CString *retsError);
 		void ComputeCoreLibraries (CExtension *pExtension, TArray<CExtension *> *retList);
+		bool ComputeDownloads (const TArray<CMultiverseCatalogEntry> &Collection, TArray<CMultiverseCatalogEntry> &retNotFound);
 		void DebugDump (void);
 		bool FindAdventureFromDesc (DWORD dwUNID, DWORD dwFlags = 0, CExtension **retpExtension = NULL);
 		bool FindBestExtension (DWORD dwUNID, DWORD dwRelease = 0, DWORD dwFlags = 0, CExtension **retpExtension = NULL);
@@ -1012,14 +1031,16 @@ class CExtensionCollection
 		EGameTypes GetGame (void) const { return m_iGame; }
 		bool GetRequiredResources (TArray<CString> *retFilespecs);
 		void InitEntityResolver (CExtension *pExtension, DWORD dwFlags, CEntityResolverList *retResolver);
+		bool IsExtensionDisabledManually (DWORD dwUNID) const { return m_DisabledExtensions.Find(dwUNID); }
 		bool IsRegisteredGame (CExtension *pAdventure, const TArray<CExtension *> &DesiredExtensions, DWORD dwFlags);
-		ALERROR Load (const CString &sFilespec, DWORD dwFlags, CString *retsError);
+		ALERROR Load (const CString &sFilespec, const TSortMap<DWORD, bool> &DisabledExtensions, DWORD dwFlags, CString *retsError);
 		inline bool LoadedInDebugMode (void) { return m_bLoadedInDebugMode; }
 		ALERROR LoadNewExtension (const CString &sFilespec, const CIntegerIP &FileDigest, CString *retsError);
 		inline void SetCollectionFolder (const CString &sFilespec) { m_sCollectionFolder = sFilespec; }
-		void SetRegisteredExtensions (const CMultiverseCollection &Collection, TArray<CMultiverseCatalogEntry *> *retNotFound);
+		void SetExtensionEnabled (DWORD dwUNID, bool bEnabled);
 		void SweepImages (void);
-		void UpdateCollectionStatus (CMultiverseCollection &Collection, int cxIconSize, int cyIconSize);
+		void UpdateCollectionStatus (TArray<CMultiverseCatalogEntry> &Collection, const SCollectionStatusOptions &Options);
+		void UpdateRegistrationStatus (const TArray<CMultiverseCatalogEntry *> &Collection);
 
 		static int Compare (CExtension *pExt1, CExtension *pExt2, bool bDebugMode);
 
@@ -1030,6 +1051,7 @@ class CExtensionCollection
 		void ClearAllMarks (void);
 		void ComputeCompatibilityLibraries (CExtension *pAdventure, DWORD dwFlags, TArray<CExtension *> *retList);
 		ALERROR ComputeFilesToLoad (const CString &sFilespec, CExtension::EFolderTypes iFolder, TSortMap<CString, int> &List, CString *retsError);
+		bool IsLibraryInUse (DWORD dwUNID, TSortMap<DWORD, bool> &LibrariesChecked = TSortMap<DWORD, bool>()) const;
 		ALERROR LoadBaseFile (const CString &sFilespec, DWORD dwFlags, CString *retsError);
 		ALERROR LoadEmbeddedExtension (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CExtension **retpExtension);
 		ALERROR LoadFile (const CString &sFilespec, CExtension::EFolderTypes iFolder, DWORD dwFlags, const CIntegerIP &CheckDigest, bool *retbReload, CString *retsError);
@@ -1039,8 +1061,9 @@ class CExtensionCollection
 		EGameTypes m_iGame;					//	Game
 		CString m_sCollectionFolder;		//	Path to collection folder
 		TArray<CString> m_ExtensionFolders;	//	Paths to extension folders
+		TSortMap<DWORD, bool> m_DisabledExtensions;
 
-		CCriticalSection m_cs;				//	Protects modifications
+		mutable CCriticalSection m_cs;		//	Protects modifications
 		TArray<CExtension *> m_Extensions;	//	All loaded extensions
 		bool m_bReloadNeeded;				//	If TRUE we need to reload our folders
 		bool m_bLoadedInDebugMode;			//	If TRUE we loaded in debug mode
@@ -1106,34 +1129,23 @@ class CDynamicDesignTable
 
 struct SDesignLoadCtx
 	{
-	SDesignLoadCtx (void) :
-			pResDb(NULL),
-			pExtension(NULL),
-			pType(NULL),
-			bBindAsNewGame(false),
-			bNoResources(false),
-            bLoopImages(false),
-			bLoadAdventureDesc(false),
-			bLoadModule(false),
-			dwInheritAPIVersion(0)
-		{ }
-
 	inline DWORD GetAPIVersion (void) const { return (pExtension ? pExtension->GetAPIVersion() : API_VERSION); }
 
 	//	Context
+	CDesignCollection *pDesign = NULL;		//	Design collection
 	CString sResDb;							//	ResourceDb filespec
-	CResourceDb *pResDb;					//	Open ResourceDb object
+	CResourceDb *pResDb = NULL;				//	Open ResourceDb object
 	CString sFolder;						//	Folder context (used when loading images)
-	CExtension *pExtension;					//	Extension
-	CDesignType *pType;						//	Current type being loaded
-	bool bLoadAdventureDesc;				//	If TRUE, we are loading an adventure desc only
-	bool bLoadModule;						//	If TRUE, we are loading elements in a module
-	DWORD dwInheritAPIVersion;				//	APIVersion of parent (if base file)
+	CExtension *pExtension = NULL;			//	Extension
+	CDesignType *pType = NULL;				//	Current type being loaded
+	bool bLoadAdventureDesc = false;		//	If TRUE, we are loading an adventure desc only
+	bool bLoadModule = false;				//	If TRUE, we are loading elements in a module
+	DWORD dwInheritAPIVersion = 0;			//	APIVersion of parent (if base file)
 
 	//	Options
-	bool bBindAsNewGame;					//	If TRUE, then we are binding a new game
-	bool bNoResources;
-    bool bLoopImages;                       //  If TRUE, image effects loop by default
+	bool bBindAsNewGame = false;			//	If TRUE, then we are binding a new game
+	bool bNoResources = false;
+    bool bLoopImages = false;				//  If TRUE, image effects loop by default
 
 	//	Output
 	CString sError;
@@ -1157,22 +1169,23 @@ class CDesignCollection
 			evtOnGlobalMarkImages			= 7,
 			
 			evtOnGlobalObjDestroyed			= 8,
+			evtOnGlobalObjGateCheck			= 9,
 
-			evtOnGlobalPlayerBoughtItem		= 9,
-			evtOnGlobalPlayerSoldItem		= 10,
-			evtOnGlobalStartDiagnostics		= 11,
+			evtOnGlobalPlayerBoughtItem		= 10,
+			evtOnGlobalPlayerSoldItem		= 11,
+			evtOnGlobalStartDiagnostics		= 12,
 
-			evtOnGlobalSystemDiagnostics	= 12,
-			evtOnGlobalSystemStarted		= 13,
-			evtOnGlobalSystemStopped		= 14,
+			evtOnGlobalSystemDiagnostics	= 13,
+			evtOnGlobalSystemStarted		= 14,
+			evtOnGlobalSystemStopped		= 15,
 
-			evtOnGlobalUniverseCreated		= 15,
-			evtOnGlobalUniverseLoad			= 16,
-			evtOnGlobalUniverseSave			= 17,
+			evtOnGlobalUniverseCreated		= 16,
+			evtOnGlobalUniverseLoad			= 17,
+			evtOnGlobalUniverseSave			= 18,
 			
-			evtOnGlobalUpdate				= 18,
+			evtOnGlobalUpdate				= 19,
 
-			evtCount						= 19
+			evtCount						= 20
 			};
 
 		enum EFlags
@@ -1215,19 +1228,24 @@ class CDesignCollection
 		ALERROR BindDesign (const TArray<CExtension *> &BindOrder, const TSortMap<DWORD, bool> &TypesUsed, DWORD dwAPIVersion, bool bNewGame, bool bNoResources, CString *retsError);
 		void CleanUp (void);
 		void ClearImageMarks (void);
-		inline CEconomyType *FindEconomyType (const CString &sID) { CEconomyType **ppType = m_EconomyIndex.GetAt(sID); return (ppType ? *ppType : NULL); }
+		void DebugOutputExtensions (void) const;
+		inline const CEconomyType *FindEconomyType (const CString &sID) { const CEconomyType **ppType = m_EconomyIndex.GetAt(sID); return (ppType ? *ppType : NULL); }
 		inline CDesignType *FindEntry (DWORD dwUNID) const { return m_AllTypes.FindByUNID(dwUNID); }
 		CExtension *FindExtension (DWORD dwUNID) const;
 		CXMLElement *FindSystemFragment (const CString &sName, CSystemTable **retpTable = NULL) const;
 		void FireGetGlobalAchievements (CGameStats &Stats);
-		bool FireGetGlobalDockScreen (CSpaceObject *pObj, CString *retsScreen = NULL, ICCItemPtr *retpData = NULL, int *retiPriority = NULL);
+
+		static constexpr DWORD FLAG_NO_OVERRIDE = 0x00000001;
+		bool FireGetGlobalDockScreen (const CSpaceObject *pObj, DWORD dwFlags, CDockScreenSys::SSelector *retSelector = NULL) const;
+
 		bool FireGetGlobalPlayerPriceAdj (STradeServiceCtx &ServiceCtx, ICCItem *pData, int *retiPriceAdj);
 		void FireOnGlobalEndDiagnostics (void);
 		void FireOnGlobalIntroCommand (const CString &sCommand);
 		void FireOnGlobalIntroStarted (void);
 		void FireOnGlobalMarkImages (void);
 		void FireOnGlobalObjDestroyed (SDestroyCtx &Ctx);
-		void FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane);
+		bool FireOnGlobalObjGateCheck (CSpaceObject *pObj, CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGateObj);
+		void FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane, ICCItem *pData);
 		void FireOnGlobalPlayerBoughtItem (CSpaceObject *pSellerObj, const CItem &Item, const CCurrencyAndValue &Price);
 		void FireOnGlobalPlayerChangedShips (CSpaceObject *pOldShip);
 		void FireOnGlobalPlayerEnteredSystem (void);
@@ -1243,6 +1261,10 @@ class CDesignCollection
 		void FireOnGlobalUniverseLoad (void);
 		void FireOnGlobalUniverseSave (void);
 		void FireOnGlobalUpdate (int iTick);
+		inline DWORD GetAdventureUNID (void) const { return (m_pAdventureExtension ? m_pAdventureExtension->GetUNID() : 0); }
+		inline DWORD GetAPIVersion (void) const { return m_dwMinAPIVersion; }
+		inline CArmorMassDefinitions &GetArmorMassDefinitions (void) { return m_ArmorDefinitions; }
+		inline const CArmorMassDefinitions &GetArmorMassDefinitions (void) const { return m_ArmorDefinitions; }
 		inline int GetCount (void) const { return m_AllTypes.GetCount(); }
 		inline int GetCount (DesignTypes iType) const { return m_ByType[iType].GetCount(); }
 		inline const CDisplayAttributeDefinitions &GetDisplayAttributes (void) const { return m_DisplayAttribs; }
@@ -1250,14 +1272,15 @@ class CDesignCollection
 		void GetEnabledExtensions (TArray<CExtension *> *retExtensionList);
 		inline CDesignType *GetEntry (int iIndex) const { return m_AllTypes.GetEntry(iIndex); }
 		inline CDesignType *GetEntry (DesignTypes iType, int iIndex) const { return m_ByType[iType].GetEntry(iIndex); }
-		inline CExtension *GetExtension (int iIndex) { return m_BoundExtensions[iIndex]; }
-		inline int GetExtensionCount (void) { return m_BoundExtensions.GetCount(); }
+		inline CExtension *GetExtension (int iIndex) const { return m_BoundExtensions[iIndex]; }
+		inline int GetExtensionCount (void) const { return m_BoundExtensions.GetCount(); }
 		CG32bitImage *GetImage (DWORD dwUNID, DWORD dwFlags = 0);
 		CString GetStartingNodeID (void);
 		void GetStats (SStats &Result) const;
 		CTopologyDescTable *GetTopologyDesc (void) const { return m_pTopology; }
 		inline bool HasDynamicTypes (void) { return (m_DynamicTypes.GetCount() > 0); }
 		bool IsAdventureExtensionBound (DWORD dwUNID);
+		inline bool IsBindComplete (void) const { return !m_bInBindDesign; }
 		bool IsRegisteredGame (void);
 		void MarkGlobalImages (void);
 		void NotifyTopologyInit (void);
@@ -1281,6 +1304,7 @@ class CDesignCollection
 
 		//	Cached data initialized at bind-time
 
+		DWORD m_dwMinAPIVersion;
 		TArray<CExtension *> m_BoundExtensions;
 		CDesignTable m_AllTypes;
 		CDesignList m_ByType[designCount];
@@ -1289,7 +1313,8 @@ class CDesignCollection
 		CTopologyDescTable *m_pTopology;
 		CExtension *m_pAdventureExtension;
 		CAdventureDesc *m_pAdventureDesc;
-		TSortMap<CString, CEconomyType *> m_EconomyIndex;
+		TSortMap<CString, const CEconomyType *> m_EconomyIndex;
+		CArmorMassDefinitions m_ArmorDefinitions;
 		CDisplayAttributeDefinitions m_DisplayAttribs;
 		CGlobalEventCache *m_EventsCache[evtCount];
 
@@ -1348,7 +1373,7 @@ inline bool CInstalledDevice::IsSecondaryWeapon (void) const
 
 inline bool CItem::IsArmor (void) const { return (m_pItemType && m_pItemType->GetArmorClass()); }
 inline bool CItem::IsDevice (void) const { return (m_pItemType && m_pItemType->GetDeviceClass()); }
-inline CEconomyType *CItem::GetCurrencyType (void) const { return m_pItemType->GetCurrencyType(); }
+inline const CEconomyType *CItem::GetCurrencyType (void) const { return m_pItemType->GetCurrencyType(); }
 inline int CItem::GetLevel (void) const { return m_pItemType->GetLevel(CItemCtx(*this)); }
 
 inline CDeviceClass *CDeviceDescList::GetDeviceClass (int iIndex) const { return m_List[iIndex].Item.GetType()->GetDeviceClass(); }

@@ -131,7 +131,12 @@ CString CLanguage::Compose (const CString &sString, ICCItem *pArgs)
 						sVar = ComposeGenderedWord(sVar, ParseGenomeID(pValue->GetStringValue()));
 						}
 					else
-						sVar = strPatternSubst(CONSTLIT("%s not found"), sParam);
+						{
+						if (g_pUniverse->InDebugMode())
+							sVar = strPatternSubst(CONSTLIT("[%s not found]"), sParam);
+						else
+							sVar = ComposeGenderedWord(sVar, genomeHumanMale);
+						}
 					}
 
 				//	Otherwise, we use the player's gender
@@ -364,6 +369,48 @@ CString CLanguage::ComposeNumber (ENumberFormatTypes iFormat, Metric rNumber)
 				return strFromDouble(rNumber, 2);
 			break;
 
+		case numberFireRate:
+			{
+			if (rNumber <= 0)
+				return CONSTLIT("none");
+
+			int iRate10 = mathRound(10.0 * g_TicksPerSecond / rNumber);
+
+			if (iRate10 == 0)
+				return CONSTLIT("<0.1 shots/sec");
+			else if ((iRate10 % 10) == 0)
+				{
+				if ((iRate10 / 10) == 1)
+					return strPatternSubst(CONSTLIT("%d shot/sec"), iRate10 / 10);
+				else
+					return strPatternSubst(CONSTLIT("%d shots/sec"), iRate10 / 10);
+				}
+			else
+				return strPatternSubst(CONSTLIT("%d.%d shots/sec"), iRate10 / 10, iRate10 % 10);
+			break;
+			}
+
+		case numberMass:
+			{
+			int iKg = mathRound(rNumber);
+
+			if (iKg < 1000)
+				return strPatternSubst(CONSTLIT("%d kg"), iKg);
+			else
+				{
+				int iTons = iKg / 1000;
+				int iKgExtra = iKg % 1000;
+
+				if (iTons == 1 && iKgExtra == 0)
+					return CONSTLIT("1 ton");
+				else if (iKgExtra == 0)
+					return strPatternSubst(CONSTLIT("%d tons"), iTons);
+				else
+					return strPatternSubst(CONSTLIT("%d.%d tons"), iTons, iKgExtra / 100);
+				}
+			break;
+			}
+
 		//	For power, we assume the value in in KWs.
 
 		case numberPower:
@@ -378,20 +425,20 @@ CString CLanguage::ComposeNumber (ENumberFormatTypes iFormat, Metric rNumber)
 			break;
 
 		case numberRegenRate:
+			{
 			if (rNumber <= 0.0)
 				return CONSTLIT("none");
-			else
-				{
-				int iRate10 = mathRound(g_TicksPerSecond * rNumber / 18.0);
 
-				if (iRate10 == 0)
-					return CONSTLIT("<0.1 hp/sec");
-				else if ((iRate10 % 10) == 0)
-					return strPatternSubst(CONSTLIT("%d hp/sec"), iRate10 / 10);
-				else
-					return strPatternSubst(CONSTLIT("%d.%d hp/sec"), iRate10 / 10, iRate10 % 10);
-				}
+			int iRate10 = mathRound(g_TicksPerSecond * rNumber / 18.0);
+
+			if (iRate10 == 0)
+				return CONSTLIT("<0.1 hp/sec");
+			else if ((iRate10 % 10) == 0)
+				return strPatternSubst(CONSTLIT("%d hp/sec"), iRate10 / 10);
+			else
+				return strPatternSubst(CONSTLIT("%d.%d hp/sec"), iRate10 / 10, iRate10 % 10);
 			break;
+			}
 
 		case numberSpeed:
 			return ComposeNumber(iFormat, (int)mathRound(100.0 * rNumber / LIGHT_SPEED));

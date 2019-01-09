@@ -163,6 +163,17 @@ bool CObjectTracker::Find (const CString &sNodeID, const CObjectTrackerCriteria 
 	if (retResult)
 		retResult->DeleteAll();
 
+	//	If necessary, refresh current system so we get the latests data.
+
+	CSystem *pSystem = g_pUniverse->GetCurrentSystem();
+	if (Criteria.NeedsRefresh()
+			&& pSystem
+			&& (sNodeID.IsBlank() 
+				|| (pSystem->GetTopology() && strEquals(sNodeID, pSystem->GetTopology()->GetID()))))
+		{
+		Refresh(pSystem);
+		}
+
 	//	If no node ID, then we look through all nodes
 
 	if (sNodeID.IsBlank())
@@ -239,6 +250,38 @@ bool CObjectTracker::Find (SNodeData *pNodeData, CSpaceObject *pObj, SObjBasics 
 
     return true;
     }
+
+bool CObjectTracker::GetCustomDesc (CSpaceObject *pObj, const SObjBasics &ObjData, CString *retsDesc) const
+
+//	GetCustomDesc
+//
+//	Returns a custom description for object services.
+
+	{
+	CDesignType *pType = pObj->GetType();
+	if (pType == NULL || !pType->HasCustomMapDescLanguage())
+		return false;
+
+	//	Compose a data block which has the default description.
+
+	CCodeChain &CC = g_pUniverse->GetCC();
+	ICCItemPtr pData = ICCItemPtr(CC.CreateSymbolTable());
+
+	//	Add the default trade description, in case we need it.
+
+    CTradingDesc *pTrade;
+    CString sTradeDesc;
+	if (!ObjData.fShowDestroyed
+			&& (pTrade = pType->GetTradingDesc())
+			&& pTrade->ComposeDescription(&sTradeDesc))
+		{
+		pData->SetStringAt(CC, CONSTLIT("tradeDesc"), sTradeDesc);
+		}
+
+	//	Translate
+
+    return pObj->Translate((ObjData.fShowDestroyed ? LANGID_DESC_GALACTIC_MAP_ABANDONED_CUSTOM : LANGID_DESC_GALACTIC_MAP_CUSTOM), pData, retsDesc);
+	}
 
 void CObjectTracker::GetGalacticMapObjects (const CTopologyNode *pNode, TArray<SObjEntry> &Results) const
 
@@ -918,7 +961,7 @@ void CObjectTracker::Refresh (CSpaceObject *pObj, SObjBasics *pObjData, CSpaceOb
     //  See if we have a custom services description
 
     CString sCustomNotes;
-    bool bHasCustomNotes = pObj->Translate((pObjData->fShowDestroyed ? LANGID_DESC_GALACTIC_MAP_ABANDONED_CUSTOM : LANGID_DESC_GALACTIC_MAP_CUSTOM), NULL, &sCustomNotes);
+    bool bHasCustomNotes = GetCustomDesc(pObj, *pObjData, &sCustomNotes);
 
 	//	If the name of this object does not match the type, then we store it.
 	//

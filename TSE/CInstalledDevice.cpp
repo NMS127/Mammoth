@@ -127,7 +127,7 @@ void CInstalledDevice::FinishInstall (CSpaceObject *pSource)
 	if (pOverlayType)
 		{
 		DWORD dwID;
-		pSource->AddOverlay(pOverlayType, GetPosAngle(), GetPosRadius(), 0, -1, &dwID);
+		pSource->AddOverlay(pOverlayType, GetPosAngle(), GetPosRadius(), 0, 0, -1, &dwID);
 
 		COverlay *pOverlay = pSource->GetOverlay(dwID);
 		if (pOverlay)
@@ -157,32 +157,20 @@ CString CInstalledDevice::GetEnhancedDesc (CSpaceObject *pSource, const CItem *p
 //	Returns description of the enhancement
 
 	{
-	int iDamageBonus;
+	CItemCtx ItemCtx(pSource, this);
 
-	//	If the item is enhanced, then we show the enhancement
-	//	(if a device happens to have the same type of enhancement, this
-	//	function will add the two enhancements together)
-
-	if (GetMods().IsNotEmpty())
-		return GetMods().GetEnhancedDesc((pItem ? *pItem : pSource->GetItemForDevice(this)), pSource, this);
-
-	//	Describe enhancements from the device only (e.g., confered by other devices)
-
-	else if (GetActivateDelay(pSource) > m_pClass->GetActivateDelay(this, pSource))
-		return CONSTLIT("-slow");
-	else if (GetActivateDelay(pSource) < m_pClass->GetActivateDelay(this, pSource))
-		return CONSTLIT("+fast");
-	else if (iDamageBonus = (m_pEnhancements ? m_pEnhancements->GetBonus() : 0))
-		return (iDamageBonus > 0 ? strPatternSubst(CONSTLIT("+%d%%"), iDamageBonus) : strPatternSubst(CONSTLIT("%d%%"), iDamageBonus));
-	else if (m_pEnhancements && m_pEnhancements->IsTracking() && !m_pClass->IsTrackingWeapon(CItemCtx()))
-		return CONSTLIT("+tracking");
-
-	//	Other enhancements
-
-	else if (IsEnhanced())
-		return CONSTLIT("+enhanced");
-	else
+	TArray<SDisplayAttribute> Attribs;
+	if (!ItemCtx.GetEnhancementDisplayAttributes(&Attribs))
 		return NULL_STR;
+
+	CString sResult = Attribs[0].sText;
+	for (int i = 1; i < Attribs.GetCount(); i++)
+		{
+		sResult.Append(CONSTLIT(" "));
+		sResult.Append(Attribs[i].sText);
+		}
+
+	return sResult;
 	}
 
 ItemFates CInstalledDevice::GetFate (void) const
@@ -412,7 +400,7 @@ void CInstalledDevice::Install (CSpaceObject *pObj, CItemListManipulator &ItemLi
 	//	Default to basic fire delay. Callers must set the appropriate delay
 	//	based on enhancements later.
 
-	m_iActivateDelay = m_pClass->GetActivateDelay(this, pObj);
+	m_iActivateDelay = m_pClass->GetActivateDelay(CItemCtx(pObj, this));
 
 	//	If we're installing a device after creation then we
 	//	zero-out the device position, etc. If necessary the
@@ -716,7 +704,7 @@ void CInstalledDevice::ReadFromStream (CSpaceObject *pSource, SLoadCtx &Ctx)
 	//	In newer versions we store an activation delay instead of an adjustment
 
 	if (Ctx.dwVersion < 93)
-		m_iActivateDelay = m_iActivateDelay * m_pClass->GetActivateDelay(this, pSource) / 100;
+		m_iActivateDelay = m_iActivateDelay * m_pClass->GetActivateDelay(CItemCtx(pSource, this)) / 100;
 
 	//	We no longer store mods in the device structure
 

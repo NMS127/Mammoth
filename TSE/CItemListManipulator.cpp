@@ -337,7 +337,7 @@ void CItemListManipulator::DeleteMarkedItems (void)
 		}
 	}
 
-int CItemListManipulator::FindItem (const CItem &Item, DWORD dwFlags)
+int CItemListManipulator::FindItem (const CItem &Item, DWORD dwFlags) const
 
 //	FindItem
 //
@@ -345,12 +345,34 @@ int CItemListManipulator::FindItem (const CItem &Item, DWORD dwFlags)
 //	the index in the list of the item or -1 if not found.
 
 	{
-	for (int i = 0; i < m_ViewMap.GetCount(); i++)
+	if (dwFlags & CItem::FLAG_FIND_MIN_CHARGES)
 		{
-		CItem &ThisItem = m_ItemList.GetItem(m_ViewMap[i]);
+		int iBestItem = -1;
+		int iBestCharges;
 
-		if (ThisItem.IsEqual(Item, dwFlags))
-			return i;
+		for (int i = 0; i < m_ViewMap.GetCount(); i++)
+			{
+			CItem &ThisItem = m_ItemList.GetItem(m_ViewMap[i]);
+
+			if (ThisItem.IsEqual(Item, dwFlags)
+					&& (iBestItem == -1 || ThisItem.GetCharges() < iBestCharges))
+				{
+				iBestItem = i;
+				iBestCharges = ThisItem.GetCharges();
+				}
+			}
+
+		return iBestItem;
+		}
+	else
+		{
+		for (int i = 0; i < m_ViewMap.GetCount(); i++)
+			{
+			CItem &ThisItem = m_ItemList.GetItem(m_ViewMap[i]);
+
+			if (ThisItem.IsEqual(Item, dwFlags))
+				return i;
+			}
 		}
 
 	return -1;
@@ -381,7 +403,9 @@ const CItem &CItemListManipulator::GetItemAtCursor (void)
 //	Returns the item at the cursor
 
 	{
-	ASSERT(m_iCursor != -1);
+	if (m_iCursor == -1)
+		return CItem::NullItem();
+
 	return m_ItemList.GetItem(m_ViewMap[m_iCursor]);
 	}
 
@@ -523,7 +547,7 @@ void CItemListManipulator::MoveItemTo (const CItem &NewItem, const CItem &OldIte
 		AddItem(NewItem);
 	}
 
-bool CItemListManipulator::Refresh (const CItem &Item)
+bool CItemListManipulator::Refresh (const CItem &Item, DWORD dwFlags)
 
 //	Refresh
 //
@@ -533,6 +557,9 @@ bool CItemListManipulator::Refresh (const CItem &Item)
 //	Returns TRUE if selection succeeded
 
 	{
+	if (dwFlags & FLAG_SORT_ITEMS)
+		m_ItemList.SortItems();
+
 	GenerateViewMap();
 
 	if (Item.GetType() == NULL)

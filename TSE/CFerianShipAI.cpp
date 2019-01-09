@@ -169,22 +169,13 @@ void CFerianShipAI::Behavior (SUpdateCtx &Ctx)
 
 								//	Remove from asteroid
 
-								ObjList.DeleteAtCursor(iOreToMine);
-								m_pTarget->OnComponentChanged(comCargo);
-								m_pTarget->ItemsModified();
-								m_pTarget->InvalidateItemListAddRemove();
+								m_pTarget->RemoveItem(OreItem, 0);
 
 								//	Add to our ship (but not 100% of the time, to
 								//	simulate the ferians consuming some ore).
 
 								if (mathRandom(1, 100) <= 25)
-									{
-									CItemListManipulator ShipList(m_pShip->GetItemList());
-									ShipList.AddItem(OreItem);
-									m_pShip->OnComponentChanged(comCargo);
-									m_pShip->ItemsModified();
-									m_pShip->InvalidateItemListAddRemove();
-									}
+									m_pShip->AddItem(OreItem);
 
 								//	Done
 
@@ -287,7 +278,12 @@ void CFerianShipAI::BehaviorStart (void)
 		case IShipController::orderNone:
 			{
 			if (m_pShip->GetDockedObj() == NULL)
-				AddOrder(IShipController::orderGate, NULL, IShipController::SData());
+				{
+				FireOnOrdersCompleted();
+
+				if (GetCurrentOrder() == IShipController::orderNone)
+					AddOrder(IShipController::orderGate, NULL, IShipController::SData());
+				}
 			break;
 			}
 
@@ -548,6 +544,10 @@ void CFerianShipAI::OnObjDestroyedNotify (const SDestroyCtx &Ctx)
 			{
 			if (Ctx.pObj == GetCurrentOrderTarget())
 				{
+				//	Stop mining
+
+				CancelCurrentOrder();
+
 				//	Avenge the base
 
 				CSpaceObject *pTarget;
@@ -557,12 +557,6 @@ void CFerianShipAI::OnObjDestroyedNotify (const SDestroyCtx &Ctx)
 					AddOrder(orderDestroyTarget, pTarget, SData());
 				else if (m_State == stateAttackingThreat)
 					AddOrder(orderDestroyTarget, m_pTarget, SData());
-				else
-					AddOrder(orderAttackNearestEnemy, NULL, SData());
-
-				//	Stop mining
-
-				CancelCurrentOrder();
 				}
 			break;
 			}

@@ -431,10 +431,7 @@ ALERROR CItemTable::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (pElement)
 		{
 		if (error = IItemGenerator::CreateFromXML(Ctx, pElement, &m_pGenerator))
-			{
-			Ctx.sError = strPatternSubst(CONSTLIT("ItemTable (%x): %s"), GetUNID(), Ctx.sError);
-			return error;
-			}
+			return ComposeLoadError(Ctx, Ctx.sError);
 		}
 
 	return NOERROR;
@@ -2224,7 +2221,10 @@ ALERROR CRandomEnhancementGenerator::InitFromXML (SDesignLoadCtx &Ctx, CXMLEleme
 
 		m_Mods = CItemEnhancement();
 
-		m_pCode = CC.Link(pPos, 1, NULL);
+		CCodeChain::SLinkOptions Options;
+		Options.iOffset = 1;
+
+		m_pCode = CC.Link(pPos, Options);
 		if (m_pCode->IsError())
 			{
 			Ctx.sError = m_pCode->GetStringValue();

@@ -19,6 +19,7 @@
 #define CANNOT_BE_EMPTY_ATTRIB					CONSTLIT("cannotBeEmpty")
 #define CATEGORIES_ATTRIB						CONSTLIT("categories")
 #define CHANCE_ATTRIB							CONSTLIT("chance")
+#define CHARGES_ATTRIB							CONSTLIT("charges")
 #define COUNT_ATTRIB							CONSTLIT("count")
 #define CRITERIA_ATTRIB							CONSTLIT("criteria")
 #define DAMAGED_ATTRIB							CONSTLIT("damaged")
@@ -44,6 +45,7 @@
 #define POS_RADIUS_ATTRIB						CONSTLIT("posRadius")
 #define POS_Z_ATTRIB							CONSTLIT("posZ")
 #define SECONDARY_WEAPON_ATTRIB					CONSTLIT("secondaryWeapon")
+#define SLOT_ID_ATTRIB							CONSTLIT("slotID")
 #define TABLE_ATTRIB							CONSTLIT("table")
 #define UNID_ATTRIB								CONSTLIT("unid")
 
@@ -66,6 +68,8 @@ class CSingleDevice : public IDeviceGenerator
 		virtual ALERROR OnDesignLoadComplete (SDesignLoadCtx &Ctx) override;
 
 	private:
+		bool FindSlot (SDeviceGenerateCtx &Ctx, const CItem &Item, SDeviceDesc &retSlotDesc) const;
+
 		//	Item creation parameters
 
 		CItemTypeRef m_pItemType;				//	Device for this slot
@@ -75,8 +79,11 @@ class CSingleDevice : public IDeviceGenerator
 		int m_iDamaged = 0;						//	Chance device is damaged
 		CRandomEnhancementGenerator m_Enhanced;	//	Procedure for enhancing device item
 		IItemGenerator *m_pExtraItems = NULL;	//	Extra items to add when device is added
+		int m_iCharges = 0;						//	Set charges on device
 
 		//	Slot properties
+
+		CString m_sSlotID;						//	Place in the given slot ID (may be blank)
 
 		int m_iPosAngle = 0;					//	Slot position
 		int m_iPosRadius = 0;
@@ -160,6 +167,7 @@ class CGroupOfDeviceGenerators : public IDeviceGenerator
 		virtual ~CGroupOfDeviceGenerators (void);
 		virtual void AddDevices (SDeviceGenerateCtx &Ctx) override;
 		virtual void AddTypesUsed (TSortMap<DWORD, bool> *retTypesUsed) override;
+		virtual Metric CalcHullPoints (void) const override;
 		virtual IDeviceGenerator *GetGenerator (int iIndex) override { return m_Table[iIndex].pDevice; }
 		virtual int GetGeneratorCount (void) override { return m_Table.GetCount(); }
 		virtual bool HasItemAttribute (const CString &sAttrib) const override;
@@ -170,6 +178,7 @@ class CGroupOfDeviceGenerators : public IDeviceGenerator
 		virtual bool FindDefaultDesc (DeviceNames iDev, SDeviceDesc *retDesc) const override;
 		virtual bool FindDefaultDesc (CSpaceObject *pObj, const CItem &Item, SDeviceDesc *retDesc) const override;
 		virtual bool FindDefaultDesc (const CDeviceDescList &DescList, const CItem &Item, SDeviceDesc *retDesc) const override;
+		virtual bool FindDefaultDesc (const CDeviceDescList &DescList, const CString &sID, SDeviceDesc *retDesc) const override;
 
 	private:
 		struct SEntry
@@ -343,6 +352,11 @@ void CSingleDevice::AddDevices (SDeviceGenerateCtx &Ctx)
                 }
             }
 
+		//	Charges
+
+		if (m_iCharges)
+			Desc.Item.SetCharges(m_iCharges);
+
         //  Damage/enhancement
 
 		if (mathRandom(1, 100) <= m_iDamaged)
@@ -353,7 +367,7 @@ void CSingleDevice::AddDevices (SDeviceGenerateCtx &Ctx)
 		//	Find the default settings for the device slot for this device
 
 		SDeviceDesc SlotDesc;
-		bool bUseSlotDesc = (Ctx.pRoot ? Ctx.pRoot->FindDefaultDesc(*Ctx.pResult, Desc.Item, &SlotDesc) : false);
+		bool bUseSlotDesc = FindSlot(Ctx, Desc.Item, SlotDesc);
 
 		//	Set the device position appropriately, either from the <Device> element,
 		//	from the slot descriptor at the root, or from defaults.
@@ -419,7 +433,7 @@ void CSingleDevice::AddDevices (SDeviceGenerateCtx &Ctx)
 		else
 			Desc.dwLinkedFireOptions = 0;
 
-		Desc.bSecondary = m_bSecondary;
+		Desc.bSecondary = m_bSecondary || (bUseSlotDesc && SlotDesc.bSecondary);
 
 		//	Enhancements
 
@@ -466,6 +480,44 @@ void CSingleDevice::AddTypesUsed (TSortMap<DWORD, bool> *retTypesUsed)
 
 	if (m_pExtraItems)
 		m_pExtraItems->AddTypesUsed(retTypesUsed);
+	}
+
+bool CSingleDevice::FindSlot (SDeviceGenerateCtx &Ctx, const CItem &Item, SDeviceDesc &retSlotDesc) const
+
+//	FindSlot
+//
+//	Finds an existing slot to put the new device in. If we find one, we return
+//	TRUE and retSlotDesc is initialized.
+
+	{
+	//	If no slot definitions, then we're done.
+
+	if (Ctx.pRoot == NULL)
+		return false;
+
+	//	If we have a slot ID, then we need to look for that slot.
+
+	else if (!m_sSlotID.IsBlank())
+		{
+		if (!Ctx.pRoot->FindDefaultDesc(*Ctx.pResult, m_sSlotID, &retSlotDesc))
+			{
+			if (g_pUniverse->InDebugMode())
+				::kernelDebugLogPattern("WARNING: Unable to find device slot %s", m_sSlotID);
+			return false;
+			}
+
+		return true;
+		}
+
+	//	Otherwise, see if a slot wants this item
+
+	else if (Ctx.pRoot->FindDefaultDesc(*Ctx.pResult, Item, &retSlotDesc))
+		return true;
+
+	//	Otherwise, not found
+
+	else
+		return false;
 	}
 
 bool CSingleDevice::HasItemAttribute (const CString &sAttrib) const
@@ -529,18 +581,17 @@ ALERROR CSingleDevice::LoadFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	if (m_Count.IsEmpty())
 		m_Count.SetConstant(1);
 
-	//	Load damage chance
-
-	m_iDamaged = pDesc->GetAttributeInteger(DAMAGED_ATTRIB);
-
 	//	Load enhancement chance
 
 	if (error = m_Enhanced.InitFromXML(Ctx, pDesc))
 		return error;
 
-    //  Level
+    //  Various properties 
 
+	m_iDamaged = pDesc->GetAttributeInteger(DAMAGED_ATTRIB);
     m_Level.LoadFromXML(pDesc->GetAttribute(LEVEL_ATTRIB));
+	m_sSlotID = pDesc->GetAttribute(SLOT_ID_ATTRIB);
+	m_iCharges = pDesc->GetAttributeIntegerBounded(CHARGES_ATTRIB, 0, -1, 0);
 
 	//	Load device position attributes
 
@@ -1042,6 +1093,27 @@ void CGroupOfDeviceGenerators::AddTypesUsed (TSortMap<DWORD, bool> *retTypesUsed
 		m_Table[i].pDevice->AddTypesUsed(retTypesUsed);
 	}
 
+Metric CGroupOfDeviceGenerators::CalcHullPoints (void) const
+
+//	CalcHullPoints
+//
+//	Returns the number of hull points (which goes towards calculating hull value)
+//	from these device slots.
+
+	{
+	static const Metric CANNOT_BE_EMPTY_PENALTY = -0.2;
+
+	Metric rPoints = 0.0;
+
+	for (int i = 0; i < m_SlotDesc.GetCount(); i++)
+		{
+		if (m_SlotDesc[i].DefaultDesc.bCannotBeEmpty)
+			rPoints += CANNOT_BE_EMPTY_PENALTY;
+		}
+
+	return rPoints;
+	}
+
 bool CGroupOfDeviceGenerators::FindDefaultDesc (DeviceNames iDev, SDeviceDesc *retDesc) const
 
 //	FindDefaultDesc
@@ -1173,6 +1245,43 @@ bool CGroupOfDeviceGenerators::FindDefaultDesc (const CDeviceDescList &DescList,
 	//	Done
 
 	return true;
+	}
+
+bool CGroupOfDeviceGenerators::FindDefaultDesc (const CDeviceDescList &DescList, const CString &sID, SDeviceDesc *retDesc) const
+
+//	FindDefaultDesc
+//
+//	Looks for a slot descriptor that matches the given ID and returns it.
+
+	{
+	int i;
+
+	//	Look for a matching slot
+
+	for (i = 0; i < m_SlotDesc.GetCount(); i++)
+		{
+		//	Skip if not the desired id
+
+		if (!strEquals(m_SlotDesc[i].DefaultDesc.sID, sID))
+			continue;
+
+		//	If this slot has an ID and maximum counts and if we've already 
+		//	exceeded those counts, then skip.
+
+		if (m_SlotDesc[i].iMaxCount != -1 
+				&& !m_SlotDesc[i].DefaultDesc.sID.IsBlank()
+				&& DescList.GetCountByID(m_SlotDesc[i].DefaultDesc.sID) >= m_SlotDesc[i].iMaxCount)
+			continue;
+
+		//	If we get this far, then this is a valid slot.
+
+		*retDesc = m_SlotDesc[i].DefaultDesc;
+		return true;
+		}
+
+	//	Not found
+
+	return false;
 	}
 
 CGroupOfDeviceGenerators::SSlotDesc *CGroupOfDeviceGenerators::FindSlotDesc (CSpaceObject *pObj, const CItem &Item) const

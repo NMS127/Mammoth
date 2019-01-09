@@ -56,6 +56,25 @@ CSystemMap::~CSystemMap (void)
 		delete m_Processors[i];
 	}
 
+void CSystemMap::AccumulateTopologyProcessors (TSortMap<int, TArray<ITopologyProcessor *>> &Result) const
+
+//	AccumulateTopologyProcessors
+//
+//	Accumulates a list of processors, ordered by priority.
+
+	{
+	for (int i = 0; i < m_Processors.GetCount(); i++)
+		{
+		ITopologyProcessor *pProcessor = m_Processors[i];
+		ITopologyProcessor::EPhase iPhase = pProcessor->GetPhase();
+		if (iPhase == ITopologyProcessor::phaseDefault)
+			iPhase = (IsPrimaryMap() ? ITopologyProcessor::phasePrimaryMap : ITopologyProcessor::phaseSecondaryMap);
+
+		auto pArray = Result.SetAt(iPhase);
+		pArray->Insert(pProcessor);
+		}
+	}
+
 bool CSystemMap::AddAnnotation (const CString &sNodeID, CEffectCreator *pEffect, int x, int y, int iRotation, DWORD *retdwID)
 
 //	AddAnnotation
@@ -95,9 +114,9 @@ bool CSystemMap::AddAnnotation (const CString &sNodeID, CEffectCreator *pEffect,
 	return true;
 	}
 
-ALERROR CSystemMap::AddFixedTopology (CTopology &Topology, TSortMap<DWORD, CTopologyNodeList> &NodesAdded, CString *retsError)
+ALERROR CSystemMap::GenerateTopology (CTopology &Topology, TSortMap<DWORD, CTopologyNodeList> &NodesAdded, CString *retsError)
 
-//	AddFixedTopology
+//	GenerateTopology
 //
 //	Adds all the nodes in its fixed topology
 
@@ -119,7 +138,7 @@ ALERROR CSystemMap::AddFixedTopology (CTopology &Topology, TSortMap<DWORD, CTopo
 
 	for (i = 0; i < m_Uses.GetCount(); i++)
 		{
-		if (error = m_Uses[i]->AddFixedTopology(Topology, NodesAdded, retsError))
+		if (error = m_Uses[i]->GenerateTopology(Topology, NodesAdded, retsError))
 			return error;
 		}
 
@@ -158,6 +177,11 @@ ALERROR CSystemMap::AddFixedTopology (CTopology &Topology, TSortMap<DWORD, CTopo
 		return error;
 		}
 
+	//	If we have a background image, then set this image to the primary map.
+
+	if (!IsPrimaryMap() && m_dwBackgroundImage)
+		GetDisplayMap()->SetBackgroundImageUNID(m_dwBackgroundImage);
+
 	return NOERROR;
 	}
 
@@ -171,7 +195,7 @@ CG32bitImage *CSystemMap::CreateBackgroundImage (Metric *retrImageScale)
 	{
 	int i;
 
-	CG32bitImage *pImage = g_pUniverse->GetLibraryBitmapCopy(m_dwBackgroundImage);
+	CG32bitImage *pImage = g_pUniverse->GetLibraryBitmapCopy(GetBackgroundImageUNID());
 	if (pImage == NULL)
 		return NULL;
 
@@ -300,7 +324,7 @@ void CSystemMap::GetBackgroundImageSize (int *retcx, int *retcy)
 //	Returns the size of the background image (in galactic coordinates).
 
 	{
-	CG32bitImage *pImage = g_pUniverse->GetLibraryBitmap(m_dwBackgroundImage);
+	CG32bitImage *pImage = g_pUniverse->GetLibraryBitmap(GetBackgroundImageUNID());
 	if (pImage)
 		{
 		*retcx = (int)(pImage->GetWidth() / m_rBackgroundImageScale);
@@ -311,6 +335,19 @@ void CSystemMap::GetBackgroundImageSize (int *retcx, int *retcy)
 		*retcx = 0;
 		*retcy = 0;
 		}
+	}
+
+DWORD CSystemMap::GetBackgroundImageUNID (void) const
+
+//	GetBackgroundImageUNID
+//
+//	Returns the background image to use.
+
+	{
+	if (m_dwBackgroundImageOverride)
+		return m_dwBackgroundImageOverride;
+
+	return m_dwBackgroundImage;
 	}
 
 ALERROR CSystemMap::OnBindDesign (SDesignLoadCtx &Ctx)
@@ -360,7 +397,7 @@ ALERROR CSystemMap::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	m_sName = pDesc->GetAttribute(NAME_ATTRIB);
 	m_dwBackgroundImage = pDesc->GetAttributeInteger(BACKGROUND_IMAGE_ATTRIB);
 	if (error = m_pPrimaryMap.LoadUNID(Ctx, pDesc->GetAttribute(PRIMARY_MAP_ATTRIB)))
-		return error;
+		return ComposeLoadError(Ctx, Ctx.sError);
 
 	m_rBackgroundImageScale = pDesc->GetAttributeIntegerBounded(BACKGROUND_IMAGE_SCALE_ATTRIB, 10, 10000, 100) / 100.0;
 
@@ -400,7 +437,7 @@ ALERROR CSystemMap::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 						strPatternSubst(CONSTLIT("%s:b"), sUNID),
 						pItem,
 						NULL_STR))
-					return error;
+					return ComposeLoadError(Ctx, Ctx.sError);
 				}
 			}
 		else if (strEquals(pItem->GetTag(), TOPOLOGY_CREATOR_TAG)
@@ -417,21 +454,21 @@ ALERROR CSystemMap::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 			CString sProcessorUNID = strPatternSubst(CONSTLIT("%d:p%d"), GetUNID(), m_Processors.GetCount());
 
 			if (error = ITopologyProcessor::CreateFromXMLAsGroup(Ctx, pItem, sProcessorUNID, &pNewProc))
-				return error;
+				return ComposeLoadError(Ctx, Ctx.sError);
 
 			m_Processors.Insert(pNewProc);
 			}
 		else if (strEquals(pItem->GetTag(), SYSTEM_TOPOLOGY_TAG))
 			{
 			if (error = m_FixedTopology.LoadFromXML(Ctx, pItem, this, sUNID, true))
-				return error;
+				return ComposeLoadError(Ctx, Ctx.sError);
 			}
 		else if (strEquals(pItem->GetTag(), USES_TAG))
 			{
 			CSystemMapRef *pRef = m_Uses.Insert();
 
 			if (error = pRef->LoadUNID(Ctx, pItem->GetAttribute(UNID_ATTRIB)))
-				return error;
+				return ComposeLoadError(Ctx, Ctx.sError);
 			}
 		else if (IsValidLoadXML(pItem->GetTag()))
 			{
@@ -443,7 +480,7 @@ ALERROR CSystemMap::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 			//	If it's none of the above, see if it is a node descriptor
 
 			if (error = m_FixedTopology.LoadNodeFromXML(Ctx, pItem, this, sUNID))
-				return error;
+				return ComposeLoadError(Ctx, Ctx.sError);
 			}
 		}
 
@@ -455,7 +492,7 @@ ALERROR CSystemMap::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 
 	for (i = 0; i < RootNodes.GetCount(); i++)
 		if (error = m_FixedTopology.AddRootNode(Ctx, RootNodes[i]))
-			return error;
+			return ComposeLoadError(Ctx, Ctx.sError);
 
 	//	Init
 
@@ -552,6 +589,8 @@ void CSystemMap::OnReadFromStream (SUniverseLoadCtx &Ctx)
 //
 //	DWORD		No. of area highlights
 //	CComplexArea
+//
+//	DWORD		m_dwBackgroundImageOverride
 
 	{
 	int i;
@@ -571,7 +610,7 @@ void CSystemMap::OnReadFromStream (SUniverseLoadCtx &Ctx)
 
 		if (Ctx.dwSystemVersion >= 154)
 			{
-			Ctx.pStream->Read(m_Annotations[i].sNodeID);
+			m_Annotations[i].sNodeID.ReadFromStream(Ctx.pStream);
 
 			DWORD dwFlags;
 			Ctx.pStream->Read(dwFlags);
@@ -614,6 +653,13 @@ void CSystemMap::OnReadFromStream (SUniverseLoadCtx &Ctx)
 			m_Annotations.Delete(i);
 			i--;
 			}
+
+	//	Background image
+
+	if (Ctx.dwSystemVersion >= 167)
+		Ctx.pStream->Read(m_dwBackgroundImageOverride);
+	else
+		m_dwBackgroundImageOverride = 0;
 	}
 
 void CSystemMap::OnReinit (void)
@@ -626,6 +672,7 @@ void CSystemMap::OnReinit (void)
 	m_bAdded = false;
 	m_Annotations.DeleteAll();
 	m_AreaHighlights.DeleteAll();
+	m_dwBackgroundImageOverride = 0;
 	}
 
 void CSystemMap::OnWriteToStream (IWriteStream *pStream)
@@ -646,6 +693,8 @@ void CSystemMap::OnWriteToStream (IWriteStream *pStream)
 //
 //	DWORD		No. of area highlights
 //	CComplexArea
+//
+//	DWORD		m_dwBackgroundImageOverride
 
 	{
 	int i;
@@ -657,7 +706,7 @@ void CSystemMap::OnWriteToStream (IWriteStream *pStream)
 	for (i = 0; i < m_Annotations.GetCount(); i++)
 		{
 		pStream->Write(m_Annotations[i].dwID);
-		pStream->Write(m_Annotations[i].sNodeID);
+		m_Annotations[i].sNodeID.WriteToStream(pStream);
 
 		DWORD dwFlags = 0;
 		dwFlags |= (m_Annotations[i].fHideIfNodeUnknown ? 0x00000001 : 0);
@@ -675,36 +724,8 @@ void CSystemMap::OnWriteToStream (IWriteStream *pStream)
 
 	for (i = 0; i < m_AreaHighlights.GetCount(); i++)
 		m_AreaHighlights[i].WriteToStream(*pStream);
-	}
 
-ALERROR CSystemMap::ProcessTopology (CTopology &Topology, CSystemMap *pTargetMap, CTopologyNodeList &NodesAdded, CString *retsError)
-
-//	ProcessTopology
-//
-//	Process the topology over any nodes added to this map.
-
-	{
-	ALERROR error;
-	int i;
-
-	//	Apply any topology processors (in order) on all the newly added nodes
-
-	for (i = 0; i < m_Processors.GetCount(); i++)
-		{
-		//	Make a copy of the node list because each call will destroy it
-
-		CTopologyNodeList NodeList = NodesAdded;
-
-		//	Process
-
-		if (error = m_Processors[i]->Process(pTargetMap, Topology, NodeList, retsError))
-			{
-			*retsError = strPatternSubst(CONSTLIT("SystemMap (%x): %s"), GetUNID(), *retsError);
-			return error;
-			}
-		}
-
-	return NOERROR;
+	pStream->Write(m_dwBackgroundImageOverride);
 	}
 
 int KeyCompare (const CSystemMap::SSortEntry &Key1, const CSystemMap::SSortEntry &Key2)

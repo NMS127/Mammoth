@@ -6,6 +6,7 @@
 #include "PreComp.h"
 
 #define ADVENTURE_DESC_TAG						CONSTLIT("AdventureDesc")
+#define ARMOR_MASS_DESC_TAG						CONSTLIT("ArmorMassDesc")
 #define ATTRIBUTE_DESC_TAG						CONSTLIT("AttributeDesc")
 #define DATA_TAG						    	CONSTLIT("Data")
 #define DISPLAY_ATTRIBUTES_TAG					CONSTLIT("DisplayAttributes")
@@ -51,6 +52,8 @@
 #define INHERIT_ATTRIB							CONSTLIT("inherit")
 #define MODIFIERS_ATTRIB						CONSTLIT("modifiers")
 #define OBSOLETE_ATTRIB							CONSTLIT("obsolete")
+#define OBSOLETE_VERSION_ATTRIB					CONSTLIT("obsoleteVersion")
+#define REQUIRED_VERSION_ATTRIB					CONSTLIT("requiredVersion")
 #define UNID_ATTRIB								CONSTLIT("UNID")
 
 #define GET_CREATE_POS_EVENT					CONSTLIT("GetCreatePos")
@@ -63,6 +66,7 @@
 #define ON_GLOBAL_INTRO_STARTED_EVENT			CONSTLIT("OnGlobalIntroStarted")
 #define ON_GLOBAL_MARK_IMAGES_EVENT				CONSTLIT("OnGlobalMarkImages")
 #define ON_GLOBAL_OBJ_DESTROYED_EVENT			CONSTLIT("OnGlobalObjDestroyed")
+#define ON_GLOBAL_OBJ_GATE_CHECK_EVENT			CONSTLIT("OnGlobalObjGateCheck")
 #define ON_GLOBAL_DOCK_PANE_INIT_EVENT			CONSTLIT("OnGlobalPaneInit")
 #define ON_GLOBAL_PLAYER_BOUGHT_ITEM_EVENT		CONSTLIT("OnGlobalPlayerBoughtItem")
 #define ON_GLOBAL_PLAYER_CHANGED_SHIPS_EVENT	CONSTLIT("OnGlobalPlayerChangedShips")
@@ -91,6 +95,8 @@
 
 #define LANGID_CORE_MAP_DESC                    CONSTLIT("core.mapDesc")
 #define LANGID_CORE_MAP_DESC_ABANDONED          CONSTLIT("core.mapDescAbandoned")
+#define LANGID_CORE_MAP_DESC_ABANDONED_CUSTOM	CONSTLIT("core.mapDescAbandonedCustom")
+#define LANGID_CORE_MAP_DESC_CUSTOM				CONSTLIT("core.mapDescCustom")
 #define LANGID_CORE_MAP_DESC_EXTRA              CONSTLIT("core.mapDescExtra")
 #define LANGID_CORE_MAP_DESC_MAIN				CONSTLIT("core.mapDescMain")
 
@@ -100,8 +106,9 @@
 #define PROPERTY_EXTENSION						CONSTLIT("extension")
 #define PROPERTY_MAP_DESCRIPTION				CONSTLIT("mapDescription")
 #define PROPERTY_MERGED							CONSTLIT("merged")
-#define PROPERTY_OBSOLETE_VERSION				CONSTLIT("obsoleteVersion")
 #define PROPERTY_NAME_PATTERN					CONSTLIT("namePattern")
+#define PROPERTY_OBSOLETE_VERSION				CONSTLIT("obsoleteVersion")
+#define PROPERTY_REQUIRED_VERSION				CONSTLIT("requiredVersion")
 #define PROPERTY_UNID							CONSTLIT("unid")
 
 #define FIELD_ENTITY							CONSTLIT("entity")
@@ -176,29 +183,15 @@ static char *CACHED_EVENTS[CDesignType::evtCount] =
 	{
 		"CanInstallItem",
 		"CanRemoveItem",
+		"OnDestroyCheck",
 		"OnGlobalTypesInit",
 		"OnObjDestroyed",
 		"OnSystemObjAttacked",
+		"OnSystemStarted",
+		"OnSystemStopped",
 		"OnSystemWeaponFire",
 		"OnUpdate",
 	};
-
-CString ParseAchievementSection (ICCItem *pItem);
-CString ParseAchievementSort (ICCItem *pItem);
-CString ParseAchievementValue (ICCItem *pItem);
-
-CDesignType::CDesignType (void) : 
-		m_dwUNID(0), 
-		m_pExtension(NULL),
-		m_dwObsoleteVersion(0),
-		m_pXML(NULL),
-		m_dwInheritFrom(0), 
-		m_pInheritFrom(NULL),
-		m_bIsModification(false),
-		m_bIsClone(false),
-		m_bIsMerged(false)
-	{
-	}
 
 CDesignType::~CDesignType (void)
 
@@ -249,6 +242,10 @@ ALERROR CDesignType::BindDesign (SDesignLoadCtx &Ctx)
 			}
 		}
 
+	//	Cache some flags
+
+	m_fHasCustomMapDescLang = (HasLanguageEntry(LANGID_CORE_MAP_DESC_CUSTOM) || HasLanguageEntry(LANGID_CORE_MAP_DESC_ABANDONED_CUSTOM));
+
 	//	Type-specific
 
 	try
@@ -266,14 +263,18 @@ ALERROR CDesignType::BindDesign (SDesignLoadCtx &Ctx)
 	return error;
 	}
 
-ALERROR CDesignType::ComposeLoadError (SDesignLoadCtx &Ctx, const CString &sError)
+ALERROR CDesignType::ComposeLoadError (SDesignLoadCtx &Ctx, const CString &sError) const
 
 //	ComposeLoadError
 //
 //	Sets Ctx.sError appropriately and returns ERR_FAIL
 
 	{
-	Ctx.sError = strPatternSubst("%s (%x): %s", GetNounPhrase(), GetUNID(), sError);
+	CString sEntity = GetEntityName();
+	if (sEntity.IsBlank())
+		sEntity = strPatternSubst("%08x", GetUNID());
+
+	Ctx.sError = strPatternSubst("%s (%s): %s", GetNounPhrase(), sEntity, sError);
 	return ERR_FAIL;
 	}
 
@@ -602,9 +603,6 @@ ICCItem *CDesignType::FindBaseProperty (CCodeChainCtx &Ctx, const CString &sProp
     else if (strEquals(sProperty, PROPERTY_MERGED))
         return CC.CreateBool(m_bIsMerged);
 
-	else if (strEquals(sProperty, PROPERTY_OBSOLETE_VERSION))
-		return (m_dwObsoleteVersion > 0 ? CC.CreateInteger(m_dwObsoleteVersion) : CC.CreateNil());
-
     else if (strEquals(sProperty, PROPERTY_NAME_PATTERN))
 		{
 		pResult = CC.CreateSymbolTable();
@@ -613,6 +611,12 @@ ICCItem *CDesignType::FindBaseProperty (CCodeChainCtx &Ctx, const CString &sProp
 		pResult->SetIntegerAt(CC, CONSTLIT("flags"), dwFlags);
 		return pResult;
 		}
+
+	else if (strEquals(sProperty, PROPERTY_OBSOLETE_VERSION))
+		return (m_dwObsoleteVersion > 0 ? CC.CreateInteger(m_dwObsoleteVersion) : CC.CreateNil());
+
+	else if (strEquals(sProperty, PROPERTY_REQUIRED_VERSION))
+		return (m_dwMinVersion > 0 ? CC.CreateInteger(m_dwMinVersion) : CC.CreateNil());
 
     else if (strEquals(sProperty, PROPERTY_UNID))
 		return CC.CreateInteger(GetUNID());
@@ -860,55 +864,42 @@ void CDesignType::FireGetGlobalAchievements (CGameStats &Stats)
 		{
 		CCodeChainCtx Ctx;
 		Ctx.DefineContainingType(this);
+
 		//	Run code
 		
-		ICCItem *pResult = Ctx.Run(Event);
+		ICCItemPtr pResult = Ctx.RunCode(Event);
+
+		//	Interpret result
+
 		if (pResult->IsError())
 			ReportEventError(GET_GLOBAL_ACHIEVEMENTS_EVENT, pResult);
+
 		else if (pResult->IsNil())
 			;
-		else if (pResult->IsList())
+
+		else if (pResult->IsSymbolTable())
+			Stats.Insert(this, pResult);
+
+		else if (pResult->IsList() && pResult->GetCount() > 0)
 			{
 			//	If we have a list of lists, then we have 
 			//	a list of achievements
 
-			if (pResult->GetCount() > 0 && pResult->GetElement(0)->IsList())
+			if (pResult->GetElement(0)->IsList() || pResult->GetElement(0)->IsSymbolTable())
 				{
 				for (i = 0; i < pResult->GetCount(); i++)
-					{
-					ICCItem *pAchievement = pResult->GetElement(i);
-					if (pAchievement->GetCount() > 0)
-						{
-						CString sName = pAchievement->GetElement(0)->GetStringValue();
-						CString sValue = ParseAchievementValue(pAchievement->GetElement(1));
-						CString sSection = ParseAchievementSection(pAchievement->GetElement(2));
-						CString sSort = ParseAchievementSort(pAchievement->GetElement(3));
-
-						if (!sName.IsBlank())
-							Stats.Insert(sName, sValue, sSection, sSort);
-						}
-					}
+					Stats.Insert(this, pResult->GetElement(i));
 				}
 
 			//	Otherwise, we have a single achievement
 
-			else if (pResult->GetCount() > 0)
-				{
-				CString sName = pResult->GetElement(0)->GetStringValue();
-				CString sValue = ParseAchievementValue(pResult->GetElement(1));
-				CString sSection = ParseAchievementSection(pResult->GetElement(2));
-				CString sSort = ParseAchievementSort(pResult->GetElement(3));
-
-				if (!sName.IsBlank())
-					Stats.Insert(sName, sValue, sSection, sSort);
-				}
+			else
+				Stats.Insert(this, pResult);
 			}
-
-		Ctx.Discard(pResult);
 		}
 	}
 
-bool CDesignType::FireGetGlobalDockScreen (const SEventHandlerDesc &Event, CSpaceObject *pObj, CString *retsScreen, ICCItemPtr *retpData, int *retiPriority)
+bool CDesignType::FireGetGlobalDockScreen (const SEventHandlerDesc &Event, const CSpaceObject *pObj, CDockScreenSys::SSelector &Selector) const
 
 //	FireGetGlobalDockScreen
 //
@@ -934,7 +925,7 @@ bool CDesignType::FireGetGlobalDockScreen (const SEventHandlerDesc &Event, CSpac
 		return false;
 		}
 
-	return CTLispConvert::AsScreen(pResult, retsScreen, retpData, retiPriority);
+	return CTLispConvert::AsScreenSelector(pResult, &Selector);
 	}
 
 bool CDesignType::FireGetGlobalPlayerPriceAdj (const SEventHandlerDesc &Event, STradeServiceCtx &ServiceCtx, ICCItem *pData, int *retiPriceAdj)
@@ -1049,7 +1040,7 @@ void CDesignType::FireObjCustomEvent (const CString &sEvent, CSpaceObject *pObj,
 		}
 	}
 
-ALERROR CDesignType::FireOnGlobalDockPaneInit (const SEventHandlerDesc &Event, void *pScreen, DWORD dwScreenUNID, const CString &sScreen, const CString &sPane, CString *retsError)
+ALERROR CDesignType::FireOnGlobalDockPaneInit (const SEventHandlerDesc &Event, void *pScreen, DWORD dwScreenUNID, const CString &sScreen, const CString &sScreenName, const CString &sPane, ICCItem *pData, CString *retsError)
 
 //	FireOnGlobalDockPaneInit
 //
@@ -1058,11 +1049,18 @@ ALERROR CDesignType::FireOnGlobalDockPaneInit (const SEventHandlerDesc &Event, v
 	{
 	CCodeChainCtx Ctx;
 	Ctx.DefineContainingType(this);
+	Ctx.SaveAndDefineDataVar(pData);
+
 	//	Set up
 
 	Ctx.SetScreen(pScreen);
+	Ctx.DefineInteger(CONSTLIT("aType"), dwScreenUNID);
 	Ctx.DefineInteger(CONSTLIT("aScreenUNID"), dwScreenUNID);
 	Ctx.DefineString(CONSTLIT("aScreen"), sScreen);
+	if (!sScreenName.IsBlank())
+		Ctx.DefineString(CONSTLIT("aScreenName"), sScreenName);
+	else
+		Ctx.DefineNil(CONSTLIT("aScreenName"));
 	Ctx.DefineString(CONSTLIT("aPane"), sPane);
 
 	//	Run
@@ -1222,6 +1220,7 @@ void CDesignType::FireOnGlobalObjDestroyed (const SEventHandlerDesc &Event, SDes
 	CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
 	CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
 	CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+	CCCtx.DefineBool(CONSTLIT("aDestroy"), Ctx.WasDestroyed());
 	CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
 
 	//	Run code
@@ -1231,6 +1230,35 @@ void CDesignType::FireOnGlobalObjDestroyed (const SEventHandlerDesc &Event, SDes
 		ReportEventError(ON_GLOBAL_OBJ_DESTROYED_EVENT, pResult);
 
 	CCCtx.Discard(pResult);
+	}
+
+bool CDesignType::FireOnGlobalObjGateCheck (const SEventHandlerDesc &Event, CSpaceObject *pObj, CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGateObj)
+
+//	FireOnGlobalObjGateCheck
+//
+//	Asks whether the type will allow the player to gate.
+
+	{
+	CCodeChainCtx Ctx;
+	Ctx.DefineContainingType(this);
+
+	Ctx.DefineSpaceObject(CONSTLIT("aObj"), pObj);
+	Ctx.DefineSpaceObject(CONSTLIT("aGateObj"), pGateObj);
+	Ctx.DefineString(CONSTLIT("aDestNodeID"), (pDestNode ? pDestNode->GetID() : NULL_STR));
+	Ctx.DefineString(CONSTLIT("aDestEntryPoint"), sDestEntryPoint);
+
+	//	Execute
+
+	ICCItemPtr pResult = Ctx.RunCode(Event);
+	if (pResult->IsError())
+		{
+		ReportEventError(ON_GLOBAL_OBJ_GATE_CHECK_EVENT, pResult);
+		return false;
+		}
+	else if (pResult->IsNil())
+		return false;
+	else
+		return true;
 	}
 
 ALERROR CDesignType::FireOnGlobalPlayerChangedShips (CSpaceObject *pOldShip, CString *retsError)
@@ -1935,7 +1963,7 @@ bool CDesignType::InheritsFrom (DWORD dwUNID) const
 	return m_pInheritFrom->InheritsFrom(dwUNID);
 	}
 
-bool CDesignType::IsIncluded (const TArray<DWORD> &ExtensionsIncluded) const
+bool CDesignType::IsIncluded (DWORD dwAPIVersion, const TArray<DWORD> &ExtensionsIncluded) const
 
 //	IsIncluded
 //
@@ -1943,6 +1971,14 @@ bool CDesignType::IsIncluded (const TArray<DWORD> &ExtensionsIncluded) const
 //	given set of extensions/libraries.
 
 	{
+	//	First see if this type is excluded because we're using the wrong API.
+
+	if (dwAPIVersion < m_dwMinVersion)
+		return false;
+
+	if (m_dwObsoleteVersion != 0 && dwAPIVersion >= m_dwObsoleteVersion)
+		return false;
+
 	//	If no extra block, then this is a standard type with no special
 	//	instructions.
 
@@ -2013,7 +2049,7 @@ void CDesignType::AddUniqueHandlers (TSortMap<CString, SEventHandlerDesc> *retIn
 		m_pInheritFrom->AddUniqueHandlers(retInheritedHandlers);
 	}
 
-CEconomyType *CDesignType::GetEconomyType (void) const
+const CEconomyType *CDesignType::GetEconomyType (void) const
 
 //	GetEconomyType
 //
@@ -2184,6 +2220,22 @@ bool CDesignType::HasLanguageBlock (void) const
 	return false;
 	}
 
+bool CDesignType::HasLanguageEntry (const CString &sID) const
+
+//	HasLanguageEntry
+//
+//	Returns TRUE if we have the given language entry.
+
+	{
+	if (m_pExtra && m_pExtra->Language.HasEntry(sID))
+		return true;
+
+	if (m_pInheritFrom && m_pInheritFrom->HasLanguageEntry(sID))
+		return true;
+
+	return false;
+	}
+
 bool CDesignType::HasSpecialAttribute (const CString &sAttrib) const
 
 //	HasSpecialAttribute
@@ -2210,16 +2262,16 @@ bool CDesignType::HasSpecialAttribute (const CString &sAttrib) const
 		{
 		CString sProperty = strSubString(sAttrib, SPECIAL_PROPERTY.GetLength());
 
-		CCodeChainCtx Ctx;
-		ICCItem *pValue = GetProperty(Ctx, sProperty);
-		if (pValue == NULL)
-			return false;
-		else
+		CString sError;
+		CPropertyCompare Compare;
+		if (!Compare.Parse(sProperty, &sError))
 			{
-			bool bResult = !pValue->IsNil();
-			pValue->Discard(&g_pUniverse->GetCC());
-			return bResult;
+			::kernelDebugLogPattern("ERROR: Unable to parse property expression: %s", sError);
+			return false;
 			}
+
+		ICCItemPtr pValue = ICCItemPtr(GetProperty(CCodeChainCtx(), Compare.GetProperty()));
+		return Compare.Eval(pValue);
 		}
 	else if (strStartsWith(sAttrib, SPECIAL_SYSTEM_LEVEL))
 		{
@@ -2385,9 +2437,12 @@ ALERROR CDesignType::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, bool 
 
 	m_pInheritFrom = NULL;
 
-	//	Obsolete
+	//	API requirements
 
-	m_dwObsoleteVersion = pDesc->GetAttributeIntegerBounded(OBSOLETE_ATTRIB, 0, -1, 0);
+	m_dwMinVersion = pDesc->GetAttributeIntegerBounded(REQUIRED_VERSION_ATTRIB, 0, -1, 0);
+	m_dwObsoleteVersion = pDesc->GetAttributeIntegerBounded(OBSOLETE_VERSION_ATTRIB, 0, -1, 0);
+	if (m_dwObsoleteVersion == 0)
+		m_dwObsoleteVersion = pDesc->GetAttributeIntegerBounded(OBSOLETE_ATTRIB, 0, -1, 0);
 
 	//	Load attributes
 
@@ -2435,6 +2490,14 @@ ALERROR CDesignType::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, bool 
 				return ComposeLoadError(Ctx, Ctx.sError);
 				}
 			}
+		else if (strEquals(pItem->GetTag(), ARMOR_MASS_DESC_TAG))
+			{
+			if (error = SetExtra()->ArmorDefinitions.InitFromXML(Ctx, pItem))
+				{
+				Ctx.pType = NULL;
+				return ComposeLoadError(Ctx, Ctx.sError);
+				}
+			}
 
 		//	Otherwise, it is some element that we don't understand.
 		}
@@ -2444,6 +2507,10 @@ ALERROR CDesignType::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, bool 
 	if (error = OnCreateFromXML(Ctx, pDesc))
 		{
 		Ctx.pType = NULL;
+
+		//	No need for ComposeLoadError because subclasses should always use 
+		//	that when returning errors.
+
 		return error;
 		}
 
@@ -2648,7 +2715,7 @@ void CDesignType::Reinit (void)
 	DEBUG_CATCH_MSG1(CONSTLIT("Crash in CDesignType::Reinit Type = %x"), GetUNID())
 	}
 
-void CDesignType::ReportEventError (const CString &sEvent, ICCItem *pError)
+void CDesignType::ReportEventError (const CString &sEvent, ICCItem *pError) const
 
 //	ReportEventError
 //
@@ -3145,38 +3212,3 @@ void CEffectCreatorRef::Set (CEffectCreator *pEffect)
 		m_dwUNID = 0;
 	}
 
-//	Utility -------------------------------------------------------------------
-
-CString ParseAchievementSection (ICCItem *pItem)
-	{
-	if (pItem == NULL)
-		return NULL_STR;
-	else if (pItem->IsNil())
-		return NULL_STR;
-	else
-		return pItem->GetStringValue();
-	}
-
-CString ParseAchievementSort (ICCItem *pItem)
-	{
-	if (pItem == NULL)
-		return NULL_STR;
-	else if (pItem->IsNil())
-		return NULL_STR;
-	else if (pItem->IsInteger())
-		return strPatternSubst(CONSTLIT("%08x"), pItem->GetIntegerValue());
-	else
-		return pItem->GetStringValue();
-	}
-
-CString ParseAchievementValue (ICCItem *pItem)
-	{
-	if (pItem == NULL)
-		return NULL_STR;
-	else if (pItem->IsNil())
-		return NULL_STR;
-	else if (pItem->IsInteger())
-		return strFormatInteger(pItem->GetIntegerValue(), -1, FORMAT_THOUSAND_SEPARATOR | FORMAT_UNSIGNED);
-	else
-		return pItem->GetStringValue();
-	}

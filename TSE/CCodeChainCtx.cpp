@@ -249,7 +249,7 @@ void CCodeChainCtx::DefineDamageEffects (const CString &sVar, SDamageCtx &Ctx)
 	pItem->Discard(&m_CC);
 	}
 
-void CCodeChainCtx::DefineContainingType (CDesignType *pType)
+void CCodeChainCtx::DefineContainingType (const CDesignType *pType)
 
 //	DefineContainingType
 //
@@ -279,7 +279,7 @@ void CCodeChainCtx::DefineContainingType (const COverlay *pOverlay)
 	DefineContainingType(pOverlay->GetType());
 	}
 
-void CCodeChainCtx::DefineContainingType (CSpaceObject *pObj)
+void CCodeChainCtx::DefineContainingType (const CSpaceObject *pObj)
 
 //	DefineContainingType
 //
@@ -419,6 +419,16 @@ bool CCodeChainCtx::InEvent (ECodeChainEvents iEvent)
 	return false;
 	}
 
+ICCItemPtr CCodeChainCtx::LinkCode (const CString &sString, CCodeChain::SLinkOptions &Options)
+
+//	LinkCode
+//
+//	Links a CodeChain expression.
+
+	{
+	return ICCItemPtr(m_CC.Link(sString, Options));
+	}
+
 void CCodeChainCtx::RemoveFrame (void)
 
 //	RemoveFrame
@@ -513,6 +523,24 @@ ICCItem *CCodeChainCtx::Run (const SEventHandlerDesc &Event)
 	DEBUG_CATCH
 	}
 
+ICCItemPtr CCodeChainCtx::RunCode (ICCItem *pCode)
+
+//	RunCode
+//
+//	Runs the given code and returns a result.
+
+	{
+	DEBUG_TRY
+
+	AddFrame();
+	ICCItemPtr pResult = ICCItemPtr(m_CC.TopLevel(pCode, this));
+	RemoveFrame();
+
+	return pResult;
+
+	DEBUG_CATCH
+	}
+
 ICCItemPtr CCodeChainCtx::RunCode (const SEventHandlerDesc &Event)
 
 //	RunCode
@@ -526,7 +554,7 @@ ICCItemPtr CCodeChainCtx::RunCode (const SEventHandlerDesc &Event)
 	CExtension *pOldExtension = m_pExtension;
 	m_pExtension = Event.pExtension;
 
-	ICCItemPtr pResult = ICCItemPtr(Run(Event.pCode));
+	ICCItemPtr pResult = RunCode(Event.pCode);
 
 	m_pExtension = pOldExtension;
 	return pResult;
@@ -577,15 +605,15 @@ bool CCodeChainCtx::RunEvalString (const CString &sString, bool bPlain, CString 
 
 	if (bPlain || *pPos == '=')
 		{
-		ICCItem *pExp = Link(sString, (bPlain ? 0 : 1), NULL);
+		CCodeChain::SLinkOptions Options;
+		Options.iOffset = (bPlain ? 0 : 1);
 
-		ICCItem *pResult = Run(pExp);	//	LATER:Event
-		Discard(pExp);
+		ICCItemPtr pExp = LinkCode(sString, Options);
+		ICCItemPtr pResult = RunCode(pExp);	//	LATER:Event
 
 		if (pResult->IsError())
 			{
 			*retsResult = pResult->GetStringValue();
-			Discard(pResult);
 			return false;
 			}
 
@@ -594,7 +622,6 @@ bool CCodeChainCtx::RunEvalString (const CString &sString, bool bPlain, CString 
 		//	be quoted).
 
 		*retsResult = pResult->GetStringValue();
-		Discard(pResult);
 		return true;
 		}
 	else
@@ -659,7 +686,7 @@ void CCodeChainCtx::SaveAndDefineOverlayID (DWORD dwID)
 	DefineInteger(STR_A_OVERLAY_ID, (int)dwID);
 	}
 
-void CCodeChainCtx::SaveAndDefineSourceVar (CSpaceObject *pSource)
+void CCodeChainCtx::SaveAndDefineSourceVar (const CSpaceObject *pSource)
 
 //	SaveAndDefineSourceVar
 //

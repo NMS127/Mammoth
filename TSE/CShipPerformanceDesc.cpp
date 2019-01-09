@@ -17,7 +17,7 @@ void CShipPerformanceDesc::Init (SShipPerformanceCtx &Ctx)
     {
 	//	Adjust speed if our armor is too heavy or too light
 
-	Ctx.rArmorSpeedBonus = Ctx.pClass->CalcArmorSpeedBonus(Ctx.iArmorMass) * LIGHT_SPEED * 0.01;
+	Ctx.rArmorSpeedBonus = Ctx.pClass->GetHullDesc().GetArmorLimits().CalcArmorSpeedBonus(Ctx.Armor) * LIGHT_SPEED * 0.01;
 
 	//	If this is positive (a bonus) then increase the speed limit.
 
@@ -30,7 +30,8 @@ void CShipPerformanceDesc::Init (SShipPerformanceCtx &Ctx)
 
     //  Initialize our maneuvering performance
 
-    m_RotationDesc.InitFromDesc(Ctx.RotationDesc);
+	m_RotationDesc = Ctx.RotationDesc;
+    m_IntegralRotationDesc.InitFromDesc(Ctx.RotationDesc);
 
 	//	Initialize reactor desc
 

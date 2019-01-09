@@ -64,6 +64,7 @@ const CG32bitPixel RGB_MODIFIER_NORMAL_TEXT =			CG32bitPixel(220,220,220);	//	H:
 #define ID_DLG_INPUT_ERROR						CONSTLIT("uiHelperInputErrorMsg")
 
 #define PROP_COLOR								CONSTLIT("color")
+#define PROP_ENABLED							CONSTLIT("enabled")
 #define PROP_FILL_TYPE							CONSTLIT("fillType")
 #define PROP_FONT								CONSTLIT("font")
 #define PROP_LINE_COLOR							CONSTLIT("lineColor")
@@ -159,7 +160,8 @@ int CUIHelper::CalcItemEntryHeight (CSpaceObject *pSource, const CItem &Item, co
 	if (Item.GetDisplayAttributes(Ctx, &Attribs, NULL, bActual))
 		{
 		int cyAttribs;
-		FormatDisplayAttributes(Attribs, rcDrawRect, &cyAttribs);
+		CCartoucheBlock AttribBlock;
+		FormatDisplayAttributes(Attribs, rcDrawRect, AttribBlock, &cyAttribs);
 		cyHeight += cyAttribs + ATTRIB_SPACING_Y;
 		}
 
@@ -582,7 +584,6 @@ void CUIHelper::CreateSessionTitle (IHISession *pSession,
 //	Close button
 
 	{
-	int i;
 	const CVisualPalette &VI = m_HI.GetVisuals();
 	const CG16bitFont &SubTitleFont = VI.GetFont(fontSubTitle);
 
@@ -697,24 +698,7 @@ void CUIHelper::CreateSessionTitle (IHISession *pSession,
 	//	Add menu items, if necessary
 
 	if (pMenu)
-		{
-		//	Menu is to the left.
-
-		int xMenu = 0;
-		int yMenu = yBottomBar + (TITLE_BAR_HEIGHT - BUTTON_HEIGHT) / 2;
-
-		for (i = 0; i < pMenu->GetCount(); i++)
-			{
-			const SMenuEntry &Entry = pMenu->GetAt(i);
-
-			IAnimatron *pButton;
-			int cyHeight;
-			VI.CreateLink(pRoot, Entry.sCommand, xMenu, yMenu, Entry.sLabel, 0, &pButton, NULL, &cyHeight);
-			yMenu += cyHeight;
-
-			pSession->RegisterPerformanceEvent(pButton, EVENT_ON_CLICK, Entry.sCommand);
-			}
-		}
+		RefreshMenu(pSession, pRoot, *pMenu);
 
 	//	Done
 
@@ -774,44 +758,57 @@ void CUIHelper::CreateSessionWaitAnimation (const CString &sID, const CString &s
 		*retpControl = pRoot;
 	}
 
-void CUIHelper::FormatDisplayAttributes (TArray<SDisplayAttribute> &Attribs, const RECT &rcRect, int *retcyHeight) const
+void CUIHelper::FormatDisplayAttributes (TArray<SDisplayAttribute> &Attribs, const RECT &rcRect, CCartoucheBlock &retBlock, int *retcyHeight) const
 
 //	FormatDisplayAttributes
 //
 //	Initializes the rcRect structure in all attribute entries.
 
 	{
-	int i;
-	const CG16bitFont &Medium = m_HI.GetVisuals().GetFont(fontMedium);
+	const CVisualPalette &VI = m_HI.GetVisuals();
+	const CG16bitFont &Medium = VI.GetFont(fontMedium);
 
-	int cxLeft = RectWidth(rcRect);
-	int x = rcRect.left;
-	int y = rcRect.top;
-
-	for (i = 0; i < Attribs.GetCount(); i++)
+	for (int i = 0; i < Attribs.GetCount(); i++)
 		{
-		int cxText = (ATTRIB_PADDING_X * 2) + Medium.MeasureText(Attribs[i].sText);
-		int cyText = (ATTRIB_PADDING_Y * 2) + Medium.GetHeight();
-		if (cxText > cxLeft && cxLeft != RectWidth(rcRect))
+		CG32bitPixel rgbBackColor;
+		CG32bitPixel rgbTextColor;
+
+		//	Figure out the colors
+
+		switch (Attribs[i].iType)
 			{
-			x = rcRect.left;
-			y += cyText + ATTRIB_SPACING_Y;
-			cxLeft = RectWidth(rcRect);
+			case attribPositive:
+			case attribEnhancement:
+				rgbBackColor = VI.GetColor(colorAreaAdvantage);
+				rgbTextColor = VI.GetColor(colorTextAdvantage);
+				break;
+
+			case attribNegative:
+			case attribWeakness:
+				rgbBackColor = VI.GetColor(colorAreaDisadvantage);
+				rgbTextColor = VI.GetColor(colorTextDisadvantage);
+				break;
+
+			default:
+				rgbBackColor = RGB_MODIFIER_NORMAL_BACKGROUND;
+				rgbTextColor = RGB_MODIFIER_NORMAL_TEXT;
+				break;
 			}
 
-		Attribs[i].rcRect.left = x;
-		Attribs[i].rcRect.top = y;
-		Attribs[i].rcRect.right = x + cxText;
-		Attribs[i].rcRect.bottom = y + cyText;
+		//	Add to block
 
-		x += cxText + ATTRIB_SPACING_X;
-		cxLeft -= cxText + ATTRIB_SPACING_X;
+		retBlock.AddCartouche(Attribs[i].sText, rgbTextColor, rgbBackColor);
 		}
 
-	y += (ATTRIB_PADDING_Y * 2) + Medium.GetHeight();
+	//	Format
+
+	retBlock.SetFont(&Medium);
+	retBlock.Format(RectWidth(rcRect));
+
+	//	Done
 
 	if (retcyHeight)
-		*retcyHeight = y - rcRect.top;
+		*retcyHeight = RectHeight(retBlock.GetBounds());
 	}
 
 void CUIHelper::GenerateDockScreenRTF (const CString &sText, CString *retsRTF) const
@@ -827,83 +824,146 @@ void CUIHelper::GenerateDockScreenRTF (const CString &sText, CString *retsRTF) c
 	*retsRTF = CRTFText::GenerateRTFText(sText, Options);
 	}
 
-void CUIHelper::PaintDisplayAttributes (CG32bitImage &Dest, TArray<SDisplayAttribute> &Attribs) const
+void CUIHelper::PaintDisplayAttribs (CG32bitImage &Dest, int x, int y, const TArray<SDisplayAttribute> &Attribs, DWORD dwOptions) const
 
-//	PaintDisplayAttributes
+//	PaintDisplayAttribs
 //
-//	Paints all display attributes. We assume that FormatDisplayAttributes
-//	has already been called.
+//	Paint item display attributes.
 
 	{
-	int i;
+	static constexpr int PADDING_X = 2;
+	static constexpr int PADDING_Y = 1;
+
 	const CVisualPalette &VI = m_HI.GetVisuals();
-	const CG16bitFont &Medium = VI.GetFont(fontMedium);
+	const CG16bitFont &Font = VI.GetFont(fontSmall);
 
-	for (i = 0; i < Attribs.GetCount(); i++)
+	const int MARGIN_X = ((dwOptions & OPTION_NO_MARGIN) ? 0 : 2);
+	const int MARGIN_Y = ((dwOptions & OPTION_NO_MARGIN) ? 0 : 1);
+	const int BOX_HEIGHT = Font.GetHeight() + (2 * PADDING_Y);
+
+	//	If we're aligned at the bottom, then the y position is the position of
+	//	the bottom of the rect.
+
+	int yOffset = 0;
+	if (dwOptions & OPTION_ALIGN_BOTTOM)
+		yOffset = -BOX_HEIGHT;
+
+	//	Paint attributes vertically.
+
+	if (dwOptions & OPTION_VERTICAL)
 		{
-		CG32bitPixel rgbBackColor;
-		CG32bitPixel rgbTextColor;
+		int yPos = y;
 
-		//	Figure out the colors
-
-		switch (Attribs[i].iType)
+		for (int i = 0; i < Attribs.GetCount(); i++)
 			{
-			case attribPositive:
-				rgbBackColor = VI.GetColor(colorAreaAdvantage);
-				rgbTextColor = VI.GetColor(colorTextAdvantage);
-				break;
+			const CString &sMods = Attribs[i].sText;
+			bool bDisadvantage = (Attribs[i].iType == attribWeakness);
 
-			case attribNegative:
-				rgbBackColor = VI.GetColor(colorAreaDisadvantage);
-				rgbTextColor = VI.GetColor(colorTextDisadvantage);
-				break;
-			case attribEnhancement:
-				rgbBackColor = VI.GetColor(colorAreaEnhancement);
-				rgbTextColor = VI.GetColor(colorTextEnhancement);
-				break;
-			case attribDegradation:
-				rgbBackColor = VI.GetColor(colorAreaDegradation);
-				rgbTextColor = VI.GetColor(colorTextDegradation);
-				break;
-			case attribControlled:
-				rgbBackColor = VI.GetColor(colorAreaControlled);
-				rgbTextColor = VI.GetColor(colorTextControlled);
-				break;
-			case attribBanned:
-				rgbBackColor = VI.GetColor(colorAreaBanned);
-				rgbTextColor = VI.GetColor(colorTextBanned);
-				break;
-			case attribCustomMagenta:
-				rgbBackColor = VI.GetColor(colorAreaCustomMagenta);
-				rgbTextColor = VI.GetColor(colorTextCustomMagenta);
-				break;
-			case attribCustomBrown:
-				rgbBackColor = VI.GetColor(colorAreaCustomBrown);
-				rgbTextColor = VI.GetColor(colorTextCustomBrown);
-				break;
-			default:
-				rgbBackColor = RGB_MODIFIER_NORMAL_BACKGROUND;
-				rgbTextColor = RGB_MODIFIER_NORMAL_TEXT;
-				break;
+			int cx = Font.MeasureText(sMods);
+			int cxBox = cx + 2 * PADDING_X;
+			int xPos = x;
+			if (dwOptions & OPTION_ALIGN_RIGHT)
+				xPos -= cxBox;
+
+			Dest.Fill(xPos,
+				yPos,
+				cxBox,
+				BOX_HEIGHT,
+				(bDisadvantage ? VI.GetColor(colorAreaDisadvantage) : VI.GetColor(colorAreaAdvantage)));
+
+			Font.DrawText(Dest,
+				xPos + PADDING_X,
+				yPos + PADDING_Y,
+				(bDisadvantage ? VI.GetColor(colorTextDisadvantage) : VI.GetColor(colorTextAdvantage)),
+				sMods);
+
+			yPos += BOX_HEIGHT + MARGIN_Y;
 			}
+		}
 
-		//	Draw the background
+	//	Paint attributes on a single line, aligned to the right.
 
-		CGDraw::RoundedRect(Dest, 
-				Attribs[i].rcRect.left, 
-				Attribs[i].rcRect.top, 
-				RectWidth(Attribs[i].rcRect), 
-				RectHeight(Attribs[i].rcRect), 
-				4, 
-				rgbBackColor);
+	else if (dwOptions & OPTION_ALIGN_RIGHT)
+		{
+		int xPos = x;
+		int yPos = y + yOffset;
 
-		//	Draw the text
+		for (int i = Attribs.GetCount() - 1; i >= 0; i--)
+			{
+			const CString &sMods = Attribs[i].sText;
+			bool bDisadvantage = (Attribs[i].iType == attribWeakness);
 
-		Medium.DrawText(Dest, 
-				Attribs[i].rcRect.left + ATTRIB_PADDING_X, 
-				Attribs[i].rcRect.top + ATTRIB_PADDING_Y, 
-				rgbTextColor, 
-				Attribs[i].sText);
+			int cx = Font.MeasureText(sMods);
+			int cxBox = cx + 2 * PADDING_X;
+			Dest.Fill(xPos - cxBox,
+				yPos,
+				cxBox,
+				BOX_HEIGHT,
+				(bDisadvantage ? VI.GetColor(colorAreaDisadvantage) : VI.GetColor(colorAreaAdvantage)));
+
+			Font.DrawText(Dest,
+				xPos - cxBox + PADDING_X,
+				yPos + PADDING_Y,
+				(bDisadvantage ? VI.GetColor(colorTextDisadvantage) : VI.GetColor(colorTextAdvantage)),
+				sMods);
+
+			xPos -= cxBox + (MARGIN_X);
+			}
+		}
+
+	//	Otherwise, paint on a single line, aligned to the left or to the center
+
+	else
+		{
+		//	Figure out where we start painting, depending on whether we are left-
+		//	aligned or centered.
+
+		int xPos;
+		if (dwOptions & OPTION_ALIGN_CENTER)
+			{
+			//	Measure all attributes.
+
+			int cxTotal = 0;
+			TArray<int> cx;
+			cx.InsertEmpty(Attribs.GetCount());
+			for (int i = 0; i < Attribs.GetCount(); i++)
+				{
+				cx[i] = Font.MeasureText(Attribs[i].sText);
+				cxTotal += cx[i];
+				}
+
+			cxTotal += MARGIN_X * (Attribs.GetCount() - 1);
+
+			xPos = x - (cxTotal / 2);
+			}
+		else
+			xPos = x;
+
+		int yPos = y + yOffset;
+
+		//	Paint all attributes on the line.
+
+		for (int i = 0; i < Attribs.GetCount(); i++)
+			{
+			const CString &sMods = Attribs[i].sText;
+			bool bDisadvantage = (Attribs[i].iType == attribWeakness);
+
+			int cx = Font.MeasureText(sMods);
+			int cxBox = cx + 2 * PADDING_X;
+			Dest.Fill(xPos,
+				yPos,
+				cxBox,
+				BOX_HEIGHT,
+				(bDisadvantage ? VI.GetColor(colorAreaDisadvantage) : VI.GetColor(colorAreaAdvantage)));
+
+			Font.DrawText(Dest,
+				xPos + PADDING_X,
+				yPos + PADDING_Y,
+				(bDisadvantage ? VI.GetColor(colorTextDisadvantage) : VI.GetColor(colorTextAdvantage)),
+				sMods);
+
+			xPos += cxBox + (MARGIN_X);
+			}
 		}
 	}
 
@@ -988,8 +1048,9 @@ void CUIHelper::PaintItemEntry (CG32bitImage &Dest, CSpaceObject *pSource, const
 	TArray<SDisplayAttribute> Attribs;
 	if (Item.GetDisplayAttributes(Ctx, &Attribs, NULL, bActual))
 		{
-		FormatDisplayAttributes(Attribs, rcDrawRect, &cyHeight);
-		PaintDisplayAttributes(Dest, Attribs);
+		CCartoucheBlock AttribBlock;
+		FormatDisplayAttributes(Attribs, rcDrawRect, AttribBlock, &cyHeight);
+		AttribBlock.Paint(Dest, rcDrawRect.left, rcDrawRect.top);
 		rcDrawRect.top += cyHeight + ATTRIB_SPACING_Y;
 		}
 
@@ -1289,6 +1350,66 @@ void CUIHelper::PaintReferenceDamageType (CG32bitImage &Dest, int x, int y, int 
 			rgbText,
 			sRef,
 			0);
+	}
+
+void CUIHelper::RefreshMenu (IHISession *pSession, IAnimatron *pRoot, const TArray<SMenuEntry> &Menu) const
+
+//	RefreshMenu
+//
+//	Refreshes a menu created with CreateSessionTitle. NOTE: All menu entries 
+//	be represented (though they may be hidden).
+
+	{
+	const CVisualPalette &VI = m_HI.GetVisuals();
+
+	ASSERT(pRoot);
+	if (pRoot == NULL)
+		return;
+
+	RECT rcRect;
+	VI.GetWidescreenRect(&rcRect);
+
+	//	Delete all existing elements (if any)
+
+	for (int i = 0; i < Menu.GetCount(); i++)
+		pSession->HIGetReanimator().DeleteElement(Menu[i].sCommand);
+
+	//	Add command buttons at the bottom
+
+	int yBottomBar = TITLE_BAR_HEIGHT + RectHeight(rcRect);
+
+	//	Menu is to the left.
+
+	int xMenu = 0;
+	int yMenu = yBottomBar + (TITLE_BAR_HEIGHT - BUTTON_HEIGHT) / 2;
+
+	//	Add menus
+
+	for (int i = 0; i < Menu.GetCount(); i++)
+		{
+		const SMenuEntry &Entry = Menu.GetAt(i);
+
+		//	If this entry is hidden, then skip
+
+		if (Entry.dwFlags & MENU_HIDDEN)
+			continue;
+
+		//	Create
+
+		IAnimatron *pButton;
+		int cyHeight;
+		VI.CreateLink(pRoot, Entry.sCommand, xMenu, yMenu, Entry.sLabel, 0, &pButton, NULL, &cyHeight);
+		yMenu += cyHeight;
+
+		//	Disable if necessary
+
+		if (Entry.dwFlags & MENU_DISABLED)
+			pButton->SetPropertyBool(PROP_ENABLED, false);
+
+		//	Register for command
+
+		pSession->RegisterPerformanceEvent(pButton, EVENT_ON_CLICK, Entry.sCommand);
+		}
 	}
 
 int CUIHelper::ScrollAnimationDecay (int iOffset)

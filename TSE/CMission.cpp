@@ -15,7 +15,9 @@ static CObjectClass<CMission>g_MissionClass(OBJID_CMISSION, NULL);
 #define EVENT_ON_STARTED						CONSTLIT("OnStarted")
 
 #define PROPERTY_ACCEPTED_ON					CONSTLIT("acceptedOn")
+#define PROPERTY_COMPLETED_ON					CONSTLIT("completedOn")
 #define PROPERTY_DEBRIEFER_ID					CONSTLIT("debrieferID")
+#define PROPERTY_IN_PROGRESS					CONSTLIT("inProgress")
 #define PROPERTY_IS_ACTIVE						CONSTLIT("isActive")
 #define PROPERTY_IS_COMPLETED					CONSTLIT("isCompleted")
 #define PROPERTY_IS_DEBRIEFED					CONSTLIT("isDebriefed")
@@ -93,6 +95,7 @@ void CMission::CompleteMission (ECompletedReasons iReason)
 		return;
 
 	bool bIsPlayerMission = (m_iStatus == statusAccepted);
+	m_dwCompletedOn = g_pUniverse->GetTicks();
 
 	//	Handle player missions differently
 
@@ -198,7 +201,7 @@ ALERROR CMission::Create (CMissionType *pType,
 
 	//	If we cannot encounter this mission, then we fail
 
-	if (!pType->CanBeEncountered())
+	if (!pType->CanBeCreated(pOwner, pCreateData))
 		return ERR_NOTFOUND;
 
 	//	Create the new object
@@ -234,6 +237,7 @@ ALERROR CMission::Create (CMissionType *pType,
 	pMission->m_fInMissionSystem = true;
 	pMission->m_dwAcceptedOn = 0;
 	pMission->m_dwLeftSystemOn = 0;
+	pMission->m_dwCompletedOn = 0;
 
 	//	Set flags so we know which events we have
 
@@ -262,11 +266,7 @@ ALERROR CMission::Create (CMissionType *pType,
 	//	Get the mission title and description (we remember these because we may
 	//	need to access them outside of the system).
 
-	if (!pMission->Translate(CONSTLIT("Name"), NULL, &pMission->m_sTitle))
-		pMission->m_sTitle = pType->GetName();
-
-	if (!pMission->Translate(CONSTLIT("Summary"), NULL, &pMission->m_sInstructions))
-		pMission->m_sInstructions = NULL_STR;
+	pMission->RefreshSummary();
 
 	//	If we haven't subscribed to the owner, do it now
 
@@ -483,6 +483,9 @@ ICCItem *CMission::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 	if (strEquals(sName, PROPERTY_ACCEPTED_ON))
 		return (m_fAcceptedByPlayer ? CC.CreateInteger(m_dwAcceptedOn) : CC.CreateNil());
 
+	else if (strEquals(sName, PROPERTY_COMPLETED_ON))
+		return (IsCompleted() ? CC.CreateInteger(m_dwCompletedOn) : CC.CreateNil());
+
 	else if (strEquals(sName, PROPERTY_DEBRIEFER_ID))
 		{
 		if (m_pDebriefer.GetID() != OBJID_NULL)
@@ -492,6 +495,9 @@ ICCItem *CMission::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		else
 			return CC.CreateNil();
 		}
+
+	else if (strEquals(sName, PROPERTY_IN_PROGRESS))
+		return CC.CreateBool(IsActive() && !IsCompleted());
 
 	else if (strEquals(sName, PROPERTY_IS_ACTIVE))
 		return CC.CreateBool(IsActive());
@@ -729,7 +735,8 @@ void CMission::OnNewSystem (CSystem *pSystem)
 			{
 			//	If mission fails when we leave the system, fail now
 
-			if (m_pType->GetOutOfSystemTimeOut() == 0)
+			if (m_pType->GetOutOfSystemTimeOut() == 0
+					&& IsAccepted())
 				SetFailure(NULL);
 
 			//	If required, close the mission
@@ -827,7 +834,8 @@ void CMission::OnPlayerEnteredSystem (CSpaceObject *pPlayer)
 
 	//	For active missions, fire event to reset player targets.
 
-	FireOnSetPlayerTarget(REASON_NEW_SYSTEM);
+	if (IsPlayerMission() && IsActive())
+		FireOnSetPlayerTarget(REASON_NEW_SYSTEM);
 	}
 
 void CMission::OnReadFromStream (SLoadCtx &Ctx)
@@ -844,6 +852,7 @@ void CMission::OnReadFromStream (SLoadCtx &Ctx)
 //	DWORD		m_dwCreatedOn
 //	DWORD		m_dwLeftSystemOn
 //	DWORD		m_dwAcceptedOn
+//	DWORD		m_dwCompletedOn
 //	CString		m_sTitle
 //	CString		m_sInstructions
 //	DWORD		Flags
@@ -851,12 +860,12 @@ void CMission::OnReadFromStream (SLoadCtx &Ctx)
 	{
 	DWORD dwLoad;
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_pType = CMissionType::AsType(g_pUniverse->FindDesignType(dwLoad));
 	if (m_pType == NULL)
-		throw CException(ERR_FAIL);
+		throw CException(ERR_FAIL, strPatternSubst(CONSTLIT("Undefined mission type: %08x"), dwLoad));
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_iStatus = (EStatus)dwLoad;
 
 	m_pOwner.ReadFromStream(Ctx);
@@ -866,19 +875,24 @@ void CMission::OnReadFromStream (SLoadCtx &Ctx)
 	m_sNodeID.ReadFromStream(Ctx.pStream);
 
 	if (Ctx.dwVersion >= 85)
-		Ctx.pStream->Read((char *)&m_dwCreatedOn, sizeof(DWORD));
+		Ctx.pStream->Read(m_dwCreatedOn);
 	else
 		m_dwCreatedOn = 0;
 
 	if (Ctx.dwVersion >= 84)
-		Ctx.pStream->Read((char *)&m_dwLeftSystemOn, sizeof(DWORD));
+		Ctx.pStream->Read(m_dwLeftSystemOn);
 	else
 		m_dwLeftSystemOn = 0;
 
 	if (Ctx.dwVersion >= 86)
-		Ctx.pStream->Read((char *)&m_dwAcceptedOn, sizeof(DWORD));
+		Ctx.pStream->Read(m_dwAcceptedOn);
 	else
 		m_dwAcceptedOn = 0;
+
+	if (Ctx.dwVersion >= 165)
+		Ctx.pStream->Read(m_dwCompletedOn);
+	else
+		m_dwCompletedOn = 0;
 
 	if (Ctx.dwVersion >= 86)
 		{
@@ -888,7 +902,7 @@ void CMission::OnReadFromStream (SLoadCtx &Ctx)
 
 	//	Flags
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_fIntroShown =			((dwLoad & 0x00000001) ? true : false);
 	m_fDeclined	=			((dwLoad & 0x00000002) ? true : false);
 	m_fDebriefed =			((dwLoad & 0x00000004) ? true : false);
@@ -930,7 +944,7 @@ void CMission::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
 
 	int iTimeout;
 	if (!m_fInMissionSystem
-			&& !IsCompleted()
+			&& IsAccepted()
 			&& (iTimeout = m_pType->GetOutOfSystemTimeOut()) != -1)
 		{
 		if (m_dwLeftSystemOn + iTimeout < (DWORD)g_pUniverse->GetTicks())
@@ -967,6 +981,7 @@ void CMission::OnWriteToStream (IWriteStream *pStream)
 //	DWORD		m_dwCreatedOn
 //	DWORD		m_dwLeftSystemOn
 //	DWORD		m_dwAcceptedOn
+//	DWORD		m_dwCompletedOn
 //	CString		m_sTitle
 //	CString		m_sInstructions
 //	DWORD		Flags
@@ -974,18 +989,16 @@ void CMission::OnWriteToStream (IWriteStream *pStream)
 	{
 	DWORD dwSave;
 
-	dwSave = m_pType->GetUNID();
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
-
-	dwSave = (DWORD)m_iStatus;
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(m_pType->GetUNID());
+	pStream->Write((DWORD)m_iStatus);
 
 	m_pOwner.WriteToStream(pStream);
 	m_pDebriefer.WriteToStream(pStream);
 	m_sNodeID.WriteToStream(pStream);
-	pStream->Write((char *)&m_dwCreatedOn, sizeof(DWORD));
-	pStream->Write((char *)&m_dwLeftSystemOn, sizeof(DWORD));
-	pStream->Write((char *)&m_dwAcceptedOn, sizeof(DWORD));
+	pStream->Write(m_dwCreatedOn);
+	pStream->Write(m_dwLeftSystemOn);
+	pStream->Write(m_dwAcceptedOn);
+	pStream->Write(m_dwCompletedOn);
 
 	m_sTitle.WriteToStream(pStream);
 	m_sInstructions.WriteToStream(pStream);
@@ -998,7 +1011,7 @@ void CMission::OnWriteToStream (IWriteStream *pStream)
 	dwSave |= (m_fDebriefed ?			0x00000004 : 0);
 	dwSave |= (m_fInMissionSystem ?		0x00000008 : 0);
 	dwSave |= (m_fAcceptedByPlayer ?	0x00000010 : 0);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	}
 
 bool CMission::ParseCriteria (const CString &sCriteria, SCriteria *retCriteria)
@@ -1117,6 +1130,27 @@ bool CMission::ParseCriteria (const CString &sCriteria, SCriteria *retCriteria)
 	return true;
 	}
 
+bool CMission::RefreshSummary (void)
+
+//	RefreshSummary
+//
+//	Refreshes the mission summary.
+
+	{
+	bool bSuccess = true;
+
+	if (!Translate(CONSTLIT("Name"), NULL, &m_sTitle))
+		m_sTitle = m_pType->GetName();
+
+	if (!Translate(CONSTLIT("Summary"), NULL, &m_sInstructions))
+		{
+		m_sInstructions = NULL_STR;
+		bSuccess = false;
+		}
+
+	return bSuccess;
+	}
+
 bool CMission::Reward (ICCItem *pData, ICCItem **retpResult)
 
 //	Reward
@@ -1207,11 +1241,7 @@ bool CMission::SetAccepted (void)
 	//	Get the mission title and description (we remember these because we may
 	//	need to access them outside of the system).
 
-	if (!Translate(CONSTLIT("Name"), NULL, &m_sTitle))
-		m_sTitle = m_pType->GetName();
-
-	if (!Translate(CONSTLIT("Summary"), NULL, &m_sInstructions))
-		m_sInstructions = NULL_STR;
+	RefreshSummary();
 
 	return true;
 	}

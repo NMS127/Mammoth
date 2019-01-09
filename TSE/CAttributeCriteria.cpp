@@ -119,6 +119,39 @@ int CAttributeCriteria::CalcLocationWeight (CSystem *pSystem, const CString &sLo
 	return CalcWeightAdj(bHasAttrib, dwMatchStrength, iAttribFreq);
 	}
 
+int CAttributeCriteria::CalcNodeWeight (CTopologyNode *pNode) const
+
+//	CalcNodeWeight
+//
+//	Computes the weight of the node.
+
+	{
+	int i;
+
+	//	Special values
+
+	if (MatchesDefault())
+		return 0;
+	else if (MatchesAll())
+		return 1000;
+
+	//	Compute
+
+	int iChance = 1000;
+	for (i = 0; i < GetCount(); i++)
+		{
+		DWORD dwMatchStrength;
+		const CString &sAttrib = GetAttribAndWeight(i, &dwMatchStrength);
+
+		bool bMatches = (pNode->HasSpecialAttribute(sAttrib) || pNode->HasAttribute(sAttrib));
+		int iAdj = CalcWeightAdj(bMatches, dwMatchStrength);
+
+		iChance = (iChance * iAdj) / 1000;
+		}
+
+	return iChance;
+	}
+
 int CAttributeCriteria::CalcWeightAdj (bool bHasAttrib, DWORD dwMatchStrength, int iAttribFreq)
 
 //	CalcWeightAdj
@@ -540,4 +573,19 @@ ALERROR CAttributeCriteria::Parse (const CString &sCriteria, DWORD dwFlags, CStr
 		}
 
 	return NOERROR;
+	}
+
+void CAttributeCriteria::WriteAsString (IWriteStream &Stream, const TArray<CString> &Attribs, const CString &sPrefix)
+
+//	WriteAsString
+//
+//	Write as a string.
+
+	{
+	for (int i = 0; i < Attribs.GetCount(); i++)
+		{
+		Stream.WriteChars(sPrefix);
+		Stream.WriteChars(Attribs[i]);
+		Stream.WriteChars(CONSTLIT("; "));
+		}
 	}

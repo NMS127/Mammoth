@@ -164,6 +164,8 @@ void CArmorHUDImages::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx &C
 //	Paint to the destination bitmap
 
 	{
+	DEBUG_TRY
+
 	int i;
 
 	if (m_bInvalid)
@@ -201,6 +203,8 @@ void CArmorHUDImages::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx &C
 
 		Ctx.iMode = iOldMode;
 		}
+
+	DEBUG_CATCH
 	}
 
 void CArmorHUDImages::Realize (SHUDPaintCtx &Ctx)
@@ -385,21 +389,12 @@ void CArmorHUDImages::Realize (SHUDPaintCtx &Ctx)
 		TArray<SDisplayAttribute> Attribs;
 		if (ItemCtx.GetEnhancementDisplayAttributes(&Attribs))
 			{
-			const CString &sMods = Attribs[0].sText;
-			bool bDisadvantage = (Attribs[0].iType == attribDegradation);
+			CUIHelper Helper(*g_pHI);
 
-			int cx = SmallFont.MeasureText(sMods);
-			m_Buffer.Fill(ARMOR_ENHANCE_X - cx - 4,
-					pImage->yName + MediumFont.GetHeight() - HP_DISPLAY_HEIGHT,
-					cx + 8,
-					HP_DISPLAY_HEIGHT,
-					(bDisadvantage ? VI.GetColor(colorAreaDegradation) : VI.GetColor(colorAreaEnhancement)));
+			DWORD dwOptions = CUIHelper::OPTION_ALIGN_BOTTOM 
+					| CUIHelper::OPTION_ALIGN_RIGHT;
 
-			SmallFont.DrawText(m_Buffer,
-					ARMOR_ENHANCE_X - cx,
-					pImage->yName + 3,
-					(bDisadvantage ? VI.GetColor(colorTextDegradation) : VI.GetColor(colorTextEnhancement)),
-					sMods);
+			Helper.PaintDisplayAttribs(m_Buffer, ARMOR_ENHANCE_X, pImage->yName + MediumFont.GetHeight(), Attribs, dwOptions);
 			}
 		}
 	}

@@ -420,7 +420,12 @@ ICCItem *CreateResultFromDataField (CCodeChain &CC, const CString &sValue)
 	//	If prefixed with = sign, then this is a CodeChain expression
 
 	else if (*sValue.GetASCIIZPointer() == '=')
-		return CC.Link(sValue, 1, NULL);
+		{
+		CCodeChain::SLinkOptions Options;
+		Options.iOffset = 1;
+
+		return CC.Link(sValue, Options);
+		}
 
 	//	Handle some special constants
 
@@ -722,7 +727,7 @@ CItemType *GetItemTypeFromArg (CCodeChain &CC, ICCItem *pArg)
 		return NULL;
 	}
 
-CEconomyType *GetEconomyTypeFromString (const CString &sCurrency)
+const CEconomyType *GetEconomyTypeFromString (const CString &sCurrency)
 	{
 	//	If we have an UNID, then look up
 
@@ -735,7 +740,7 @@ CEconomyType *GetEconomyTypeFromString (const CString &sCurrency)
 	return g_pUniverse->FindEconomyType(sCurrency);
 	}
 
-CEconomyType *GetEconomyTypeFromItem (CCodeChain &CC, ICCItem *pItem)
+const CEconomyType *GetEconomyTypeFromItem (CCodeChain &CC, ICCItem *pItem)
 	{
 	if (pItem == NULL || pItem->IsNil())
 		return CEconomyType::AsType(g_pUniverse->FindDesignType(DEFAULT_ECONOMY_UNID));
@@ -764,7 +769,7 @@ ALERROR GetEconomyUNIDOrDefault (CCodeChain &CC, ICCItem *pItem, DWORD *retdwUNI
 		}
 	else
 		{
-		CEconomyType *pEconomy = g_pUniverse->FindEconomyType(pItem->GetStringValue());
+		const CEconomyType *pEconomy = g_pUniverse->FindEconomyType(pItem->GetStringValue());
 		if (pEconomy == NULL)
 			return ERR_FAIL;
 
@@ -918,6 +923,9 @@ ALERROR GetPosOrObject (CEvalContext *pEvalCtx,
 
 		else if (strEquals(sTag, CONSTLIT("location")))
 			{
+			//	LATER: At some point we should allow the result of
+			//	sysGetRandomLocation to be used here.
+
 			CSystem *pSystem = g_pUniverse->GetCurrentSystem();
 			if (pSystem == NULL)
 				return ERR_FAIL;
@@ -1092,7 +1100,7 @@ void DefineGlobalItem (CCodeChain &CC, const CString &sVar, const CItem &Item)
 	pItem->Discard(&CC);
 	}
 
-void DefineGlobalSpaceObject (CCodeChain &CC, const CString &sVar, CSpaceObject *pObj)
+void DefineGlobalSpaceObject (CCodeChain &CC, const CString &sVar, const CSpaceObject *pObj)
 
 //	DefineGlobalSpaceObject
 //

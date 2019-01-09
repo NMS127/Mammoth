@@ -5,9 +5,9 @@
 
 #pragma once
 
-constexpr DWORD API_VERSION =							41;
+constexpr DWORD API_VERSION =							43;
 constexpr DWORD UNIVERSE_SAVE_VERSION =					35;
-constexpr DWORD SYSTEM_SAVE_VERSION =					163;
+constexpr DWORD SYSTEM_SAVE_VERSION =					168;
 
 //	Uncomment out the following define when building a stable release
 
@@ -604,3 +604,15 @@ constexpr DWORD SYSTEM_SAVE_VERSION =					163;
 //
 //	163: 1.8 Beta 3
 //		Added m_fShowMapLabel to CShip
+//
+//	165: 1.8 Beta 4
+//		Added m_dwCompletedOn to CMission
+//
+//	166: 1.8 Beta 4
+//		m_Targets in CTimedEncounterEvent replaces m_pTarget
+//
+//	167: 1.8 Beta 4
+//		m_dwBackgroundImageOverride in CSystemMap
+//
+//	168: 1.8 Beta 4
+//		m_iPosZ in COverlay

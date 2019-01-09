@@ -30,6 +30,7 @@ static char *CACHED_EVENTS[CDesignCollection::evtCount] =
 		"OnGlobalMarkImages",
 		
 		"OnGlobalObjDestroyed",
+		"OnGlobalObjGateCheck",
 
 		"OnGlobalPlayerBoughtItem",
 		"OnGlobalPlayerSoldItem",
@@ -150,6 +151,7 @@ ALERROR CDesignCollection::AddDynamicType (CExtension *pExtension, DWORD dwUNID,
 		//	Bind
 
 		SDesignLoadCtx Ctx;
+		Ctx.pDesign = this;
 		Ctx.pExtension = pExtension;
 		Ctx.bBindAsNewGame = false;
 
@@ -238,9 +240,20 @@ ALERROR CDesignCollection::BindDesign (const TArray<CExtension *> &BindOrder, co
 	m_pTopology = NULL;
 	m_pAdventureExtension = NULL;
 
+	//	Minimum API version
+	//
+	//	If we're loading an old game, and if we don't have the TypesUsed array, then it
+	//	means we need to load all obsolete types. In that case we use API = 0.
+
+	if (!bNewGame && TypesUsed.GetCount() == 0)
+		m_dwMinAPIVersion = 0;
+	else
+		m_dwMinAPIVersion = dwAPIVersion;
+
 	//	Create a design load context
 
 	SDesignLoadCtx Ctx;
+	Ctx.pDesign = this;
 	Ctx.bBindAsNewGame = bNewGame;
 	Ctx.bNoResources = bNoResources;
 
@@ -274,7 +287,7 @@ ALERROR CDesignCollection::BindDesign (const TArray<CExtension *> &BindOrder, co
 
 		//	Add the types
 
-		m_AllTypes.Merge(Types, m_OverrideTypes, ExtensionsIncluded, TypesUsed, dwAPIVersion);
+		m_AllTypes.Merge(Types, m_OverrideTypes, ExtensionsIncluded, TypesUsed, m_dwMinAPIVersion);
 
 		//	If this is the adventure, then remember it
 
@@ -373,11 +386,11 @@ ALERROR CDesignCollection::BindDesign (const TArray<CExtension *> &BindOrder, co
 	m_EconomyIndex.DeleteAll();
 	for (i = 0; i < GetCount(designEconomyType); i++)
 		{
-		CEconomyType *pEcon = CEconomyType::AsType(GetEntry(designEconomyType, i));
+		const CEconomyType *pEcon = CEconomyType::AsType(GetEntry(designEconomyType, i));
 		const CString &sName = pEcon->GetSID();
 
 		bool bUnique;
-		CEconomyType **ppDest = m_EconomyIndex.SetAt(sName, &bUnique);
+		const CEconomyType **ppDest = m_EconomyIndex.SetAt(sName, &bUnique);
 		if (!bUnique)
 			{
 			pEcon->ComposeLoadError(Ctx, CONSTLIT("Currency ID must be unique"));
@@ -393,6 +406,7 @@ ALERROR CDesignCollection::BindDesign (const TArray<CExtension *> &BindOrder, co
 	//	to bind. We also use it to set up the inheritence hierarchy, which means
 	//	that we rely on the map from UNID to valid design type (m_AllTypes)
 
+	m_ArmorDefinitions.DeleteAll();
 	m_DisplayAttribs.DeleteAll();
 
 	for (i = 0; i < m_AllTypes.GetCount(); i++)
@@ -408,10 +422,19 @@ ALERROR CDesignCollection::BindDesign (const TArray<CExtension *> &BindOrder, co
 		//	We take this opportunity to build a list of display attributes
 		//	defined by each type.
 
+		const CArmorMassDefinitions &ArmorDefinitions = pEntry->GetArmorMassDefinitions();
+		if (!ArmorDefinitions.IsEmpty())
+			m_ArmorDefinitions.Append(ArmorDefinitions);
+
 		const CDisplayAttributeDefinitions &Attribs = pEntry->GetDisplayAttributes();
 		if (!Attribs.IsEmpty())
 			m_DisplayAttribs.Append(Attribs);
 		}
+
+	//	Tell our armor mass definitions that we're done so that we can calculate
+	//	some indices. This must be called before Bind for armor.
+
+	m_ArmorDefinitions.OnInitDone();
 
 	//	Now call Bind on all active design entries
 
@@ -589,6 +612,33 @@ ALERROR CDesignCollection::CreateTemplateTypes (SDesignLoadCtx &Ctx)
 	DEBUG_CATCH
 	}
 
+void CDesignCollection::DebugOutputExtensions (void) const
+
+//	DebugOutputExtensions
+//
+//	Outputs the list of bound extensions.
+
+	{
+	for (int i = 0; i < GetExtensionCount(); i++)
+		{
+		CExtension *pExtension = GetExtension(i);
+		if (pExtension->GetFolderType() == CExtension::folderBase)
+			continue;
+
+		CString sName = pExtension->GetName();
+		if (sName.IsBlank())
+			sName = strPatternSubst(CONSTLIT("%08x"), pExtension->GetUNID());
+
+		CString sVersion = pExtension->GetVersion();
+		if (!sVersion.IsBlank())
+			sVersion = strPatternSubst(CONSTLIT(" [%s]"), sVersion);
+
+		::kernelDebugLogPattern("Extension: %s%s", sName, sVersion);
+		}
+
+	::kernelDebugLogPattern("Using API version: %d", m_dwMinAPIVersion);
+	}
+
 CExtension *CDesignCollection::FindExtension (DWORD dwUNID) const
 
 //	FindExtension
@@ -650,66 +700,62 @@ void CDesignCollection::FireGetGlobalAchievements (CGameStats &Stats)
 		}
 	}
 
-bool CDesignCollection::FireGetGlobalDockScreen (CSpaceObject *pObj, CString *retsScreen, ICCItemPtr *retpData, int *retiPriority)
+bool CDesignCollection::FireGetGlobalDockScreen (const CSpaceObject *pObj, DWORD dwFlags, CDockScreenSys::SSelector *retSelector) const
 
 //	FireGetGlobalDockScreen
 //
 //	Allows types to override the dock screen for an object.
-//	NOTE: If we return TRUE, callers must discard *retpData.
 
 	{
-	int i;
-	CCodeChain &CC = g_pUniverse->GetCC();
+	//	If we don't want override screens then we only return screens that DO NOT
+	//	have the override only flag (even if they might be higher priority).
+	//	We use this to tell if a station has any screens at all (excluding 
+	//	override-only screens).
 
-	int iBestPriority = -1;
-	CString sBestScreen;
-	ICCItemPtr pBestData;
+	bool bNoOverride = ((dwFlags & FLAG_NO_OVERRIDE) ? true : false);
 
 	//	Loop over all types and get the highest priority screen
 
-	for (i = 0; i < m_EventsCache[evtGetGlobalDockScreen]->GetCount(); i++)
+	CDockScreenSys::SSelector BestScreen;
+	BestScreen.iPriority = -1;
+
+	for (int i = 0; i < m_EventsCache[evtGetGlobalDockScreen]->GetCount(); i++)
 		{
 		SEventHandlerDesc Event;
 		CDesignType *pType = m_EventsCache[evtGetGlobalDockScreen]->GetEntry(i, &Event);
 
-		int iPriority;
-		CString sScreen;
-		ICCItemPtr pData;
-		if (pType->FireGetGlobalDockScreen(Event, pObj, &sScreen, &pData, &iPriority))
+		CDockScreenSys::SSelector EventScreen;
+		if (pType->FireGetGlobalDockScreen(Event, pObj, EventScreen))
 			{
+			//	If this is an override only screen and we don't want override
+			//	screens, then skip.
+
+			if (bNoOverride && EventScreen.bOverrideOnly)
+				continue;
+
 			//	If we don't care about a specific screen then only want to know
 			//	whether there is at least one global dock screen, so we take a
 			//	short cut.
 
-			if (retsScreen == NULL)
+			else if (retSelector == NULL)
 				return true;
 
 			//	Otherwise, see if this is better.
 
-			if (iPriority > iBestPriority)
-				{
-				iBestPriority = iPriority;
-				sBestScreen = sScreen;
-				pBestData = pData;
-				}
+			else if (EventScreen.iPriority > BestScreen.iPriority)
+				BestScreen = EventScreen;
 			}
 		}
 
 	//	If none found, then we're done
 
-	if (iBestPriority == -1)
+	if (BestScreen.iPriority == -1)
 		return false;
 
 	//	Otherwise, return screen
 
-	if (retsScreen)
-		*retsScreen = sBestScreen;
-
-	if (retiPriority)
-		*retiPriority = iBestPriority;
-
-	if (retpData)
-		*retpData = pBestData;
+	if (retSelector)
+		*retSelector = BestScreen;
 
 	return true;
 	}
@@ -851,7 +897,28 @@ void CDesignCollection::FireOnGlobalObjDestroyed (SDestroyCtx &Ctx)
 		}
 	}
 
-void CDesignCollection::FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane)
+bool CDesignCollection::FireOnGlobalObjGateCheck (CSpaceObject *pObj, CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGateObj)
+
+//	FireOnGlobalObjGateCheck
+//
+//	Asks all types whether they will allow the player to gate.
+
+	{
+	bool bResult = true;
+
+	for (int i = 0; i < m_EventsCache[evtOnGlobalObjGateCheck]->GetCount(); i++)
+		{
+		SEventHandlerDesc Event;
+		CDesignType *pType = m_EventsCache[evtOnGlobalObjGateCheck]->GetEntry(i, &Event);
+
+		if (!pType->FireOnGlobalObjGateCheck(Event, pObj, pDestNode, sDestEntryPoint, pGateObj))
+			bResult = false;
+		}
+
+	return bResult;
+	}
+
+void CDesignCollection::FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane, ICCItem *pData)
 
 //	FireOnGlobalPaneInit
 //
@@ -877,7 +944,9 @@ void CDesignCollection::FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot,
 				pScreen,
 				dwRootUNID,
 				sScreenUNID,
+				sScreen,
 				sPane,
+				pData,
 				&sError) != NOERROR)
 			kernelDebugLogString(sError);
 		}
@@ -1157,10 +1226,10 @@ void CDesignCollection::FireOnGlobalUpdate (int iTick)
 //	Types get a chance to do whatever they want once every 15 ticks.
 
 	{
-	int i;
+	DEBUG_TRY
 
 	CString sError;
-	for (i = 0; i < m_EventsCache[evtOnGlobalUpdate]->GetCount(); i++)
+	for (int i = 0; i < m_EventsCache[evtOnGlobalUpdate]->GetCount(); i++)
 		{
 		SEventHandlerDesc Event;
 		CDesignType *pType = m_EventsCache[evtOnGlobalUpdate]->GetEntry(i, &Event);
@@ -1168,6 +1237,8 @@ void CDesignCollection::FireOnGlobalUpdate (int iTick)
 		if ((((DWORD)iTick + pType->GetUNID()) % GLOBAL_ON_UPDATE_CYCLE) == 0)
 			pType->FireOnGlobalUpdate(Event);
 		}
+
+	DEBUG_CATCH
 	}
 
 DWORD CDesignCollection::GetDynamicUNID (const CString &sName)
@@ -1237,7 +1308,10 @@ CG32bitImage *CDesignCollection::GetImage (DWORD dwUNID, DWORD dwFlags)
 		//	this call is guaranteed to succeed.
 
 		if (dwFlags & FLAG_IMAGE_LOCK)
-			pImage->Lock(SDesignLoadCtx());
+			{
+			SDesignLoadCtx LoadCtx;
+			pImage->Lock(LoadCtx);
+			}
 
 		//	Done
 

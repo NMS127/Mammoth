@@ -66,6 +66,8 @@ void CNavigateOrder::OnAttacked (CShip *pShip, CAIBehaviorCtx &Ctx, CSpaceObject
 //	Deal with attacks.
 
 	{
+	DEBUG_TRY
+
 	//	If we get attacked, at least attack back.
 
 	if (pAttacker
@@ -73,6 +75,8 @@ void CNavigateOrder::OnAttacked (CShip *pShip, CAIBehaviorCtx &Ctx, CSpaceObject
 			&& !bFriendlyFire
 			&& m_Objs[objTarget] == NULL)
 		m_Objs[objTarget] = pAttacker;
+
+	DEBUG_CATCH
 	}
 
 void CNavigateOrder::OnBehavior (CShip *pShip, CAIBehaviorCtx &Ctx)
@@ -121,6 +125,11 @@ void CNavigateOrder::OnBehavior (CShip *pShip, CAIBehaviorCtx &Ctx)
 		//	If we're docked already, then we're done
 
 		if (pShip->GetDockedObj() == m_Objs[objDest])
+			pShip->CancelCurrentOrder();
+
+		//	If we have no target, then nothing to do
+
+		else if (m_Objs[objDest] == NULL)
 			pShip->CancelCurrentOrder();
 
 		//	Navigate

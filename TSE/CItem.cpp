@@ -44,6 +44,8 @@
 #define LANGID_CORE_CHARGES						CONSTLIT("core.charges")
 #define LANGID_CORE_REFERENCE					CONSTLIT("core.reference")
 
+#define SPECIAL_PROPERTY						CONSTLIT("property:")
+
 CItemEnhancement CItem::m_NullMod;
 CItem CItem::m_NullItem;
 
@@ -654,6 +656,7 @@ bool CItem::FireOnDestroyCheck (CItemCtx &ItemCtx, DestructionTypes iCause, cons
 		Ctx.SaveAndDefineItemVar(*this);
 		Ctx.DefineSpaceObject(CONSTLIT("aDestroyer"), Attacker.GetObj());
 		Ctx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Attacker.GetOrderGiver());
+		Ctx.DefineBool(CONSTLIT("aDestroy"), (iCause != enteredStargate && iCause != ascended));
 		Ctx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(iCause));
 
 		ICCItem *pResult = Ctx.Run(Event);
@@ -782,6 +785,7 @@ void CItem::FireOnObjDestroyed (CSpaceObject *pSource, const SDestroyCtx &Ctx) c
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
 		CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
 		CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+		CCCtx.DefineBool(CONSTLIT("aDestroy"), Ctx.WasDestroyed());
 		CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
 
 		ICCItem *pResult = CCCtx.Run(Event);
@@ -1088,30 +1092,20 @@ CString CItem::GetEnhancedDesc (CSpaceObject *pInstalled) const
 //	for this item.
 
 	{
-	CInstalledDevice *pDevice;
+	CItemCtx ItemCtx(this, pInstalled);
 
-	//	If this is a device, then ask the device to describe the
-	//	enhancements
-
-	if (pInstalled && IsInstalled() && (pDevice = pInstalled->FindDevice(*this)))
-		return pDevice->GetEnhancedDesc(pInstalled, this);
-
-	//	Deal with complex enhancements
-	//	(if a device happens to have the same type of enhancement, this
-	//	function will add the two enhancements together)
-
-	if (GetMods().IsNotEmpty())
-		return GetMods().GetEnhancedDesc(*this, pInstalled);
-
-	//	Otherwise, generic enhancement
-
-	else if (IsEnhanced())
-		return CONSTLIT("+enhanced");
-
-	//	Otherwise, not enhanced
-
-	else
+	TArray<SDisplayAttribute> Attribs;
+	if (!ItemCtx.GetEnhancementDisplayAttributes(&Attribs))
 		return NULL_STR;
+
+	CString sResult = Attribs[0].sText;
+	for (int i = 1; i < Attribs.GetCount(); i++)
+		{
+		sResult.Append(CONSTLIT(" "));
+		sResult.Append(Attribs[i].sText);
+		}
+
+	return sResult;
 	}
 
 int CItem::GetMassKg (void) const
@@ -1122,6 +1116,16 @@ int CItem::GetMassKg (void) const
 
 	{
 	return m_pItemType->GetMassKg(CItemCtx(*this));
+	}
+
+int CItem::GetMaxCharges (void) const
+
+//	GetMaxCharges
+//
+//	Returns the maximum charges for the item.
+
+	{
+	return (m_pItemType ? m_pItemType->GetMaxCharges() : 0);
 	}
 
 CString CItem::GetNounPhrase (CItemCtx &Ctx, DWORD dwFlags) const
@@ -1689,7 +1693,23 @@ bool CItem::HasSpecialAttribute (const CString &sAttrib) const
 //	Returns TRUE if we have the given special attribute
 
 	{
-	return m_pItemType->HasSpecialAttribute(sAttrib);
+	if (strStartsWith(sAttrib, SPECIAL_PROPERTY))
+		{
+		CString sProperty = strSubString(sAttrib, SPECIAL_PROPERTY.GetLength());
+
+		CString sError;
+		CPropertyCompare Compare;
+		if (!Compare.Parse(sProperty, &sError))
+			{
+			::kernelDebugLogPattern("ERROR: Unable to parse property expression: %s", sError);
+			return false;
+			}
+
+		ICCItemPtr pValue = ICCItemPtr(GetItemProperty(CCodeChainCtx(), CItemCtx(*this), Compare.GetProperty()));
+		return Compare.Eval(pValue);
+		}
+	else
+		return m_pItemType->HasSpecialAttribute(sAttrib);
 	}
 
 bool CItem::HasUseItemScreen (void) const
@@ -1729,9 +1749,10 @@ bool CItem::IsEqual (const CItem &Item, DWORD dwFlags) const
 
 	{
 	const bool bIgnoreInstalled = (dwFlags & FLAG_IGNORE_INSTALLED ? true : false);
+	const bool bIgnoreEnhancements = (dwFlags & FLAG_IGNORE_ENHANCEMENTS ? true : false);
 
 	return (m_pItemType == Item.m_pItemType
-			&& m_dwFlags == Item.m_dwFlags
+			&& ((bIgnoreEnhancements && (m_dwFlags & ~flagEnhanced) == (Item.m_dwFlags & ~flagEnhanced)) || m_dwFlags == Item.m_dwFlags)
 			&& (bIgnoreInstalled || m_dwInstalled == Item.m_dwInstalled)
 			&& IsExtraEqual(Item.m_pExtra, dwFlags));
 	}
@@ -3001,7 +3022,7 @@ bool CItem::SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, C
 		{
 		if (pValue == NULL || pValue->IsNil())
 			{
-			*retsError = NULL_STR;
+			if (retsError) *retsError = NULL_STR;
 			return false;
 			}
 			
@@ -3028,7 +3049,7 @@ bool CItem::SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, C
 			SetCharges(GetCharges() + 1);
 		else if (pValue->IsNil())
 			{
-			*retsError = NULL_STR;
+			if (retsError) *retsError = NULL_STR;
 			return false;
 			}
 		else
@@ -3041,7 +3062,7 @@ bool CItem::SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, C
 			SetInstalled(-1);
 		else
 			{
-			*retsError = CONSTLIT("Unable to set installation flag on item.");
+			if (retsError) *retsError = CONSTLIT("Unable to set installation flag on item.");
 			return false;
 			}
 		}
@@ -3083,7 +3104,7 @@ bool CItem::SetProperty (CItemCtx &Ctx, const CString &sName, ICCItem *pValue, C
 
 	else
 		{
-		*retsError = strPatternSubst(CONSTLIT("Unknown item property: %s."), sName);
+		if (retsError) *retsError = strPatternSubst(CONSTLIT("Unknown item property: %s."), sName);
 		return false;
 		}
 
@@ -3170,7 +3191,7 @@ ICCItem *CItem::WriteToCCItem (CCodeChain &CC) const
 	return pResult;
 	}
 
-void CItem::WriteToStream (IWriteStream *pStream)
+void CItem::WriteToStream (IWriteStream *pStream) const
 
 //	WriteToStream
 //
@@ -3189,20 +3210,20 @@ void CItem::WriteToStream (IWriteStream *pStream)
 
 	{
 	DWORD dwSave = m_pItemType->GetUNID();
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 
 	dwSave = MAKELONG(m_dwCount, MAKEWORD(m_dwFlags, m_dwInstalled));
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 
 	//	Save SExtra
 
 	dwSave = (m_pExtra ? 0xffffffff : 0);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	if (m_pExtra)
 		{
-		pStream->Write((char *)&m_pExtra->m_dwCharges, sizeof(DWORD));
-		pStream->Write((char *)&m_pExtra->m_dwVariant, sizeof(DWORD));
-		pStream->Write((char *)&m_pExtra->m_dwDisruptedTime, sizeof(DWORD));
+		pStream->Write(m_pExtra->m_dwCharges);
+		pStream->Write(m_pExtra->m_dwVariant);
+		pStream->Write(m_pExtra->m_dwDisruptedTime);
 
 		m_pExtra->m_Mods.WriteToStream(pStream);
 
@@ -3213,10 +3234,6 @@ void CItem::WriteToStream (IWriteStream *pStream)
 	}
 
 //	CItemCriteria ------------------------------------------------------------
-
-CItemCriteria::CItemCriteria (void) : pFilter(NULL)
-	{ 
-	}
 
 CItemCriteria::CItemCriteria (const CItemCriteria &Copy)
 
@@ -3427,4 +3444,23 @@ CString CItemCriteria::GetName (void) const
 
 		return sName;
 		}
+	}
+
+bool CItemCriteria::Intersects (const CItemCriteria &Src) const
+
+//	Intersects
+//
+//	Returns TRUE if the two criterias match at least one item in common.
+
+	{
+	for (int i = 0; i < g_pUniverse->GetItemTypeCount(); i++)
+		{
+		CItemType *pType = g_pUniverse->GetItemType(i);
+		CItem Item(pType, 1);
+
+		if (Item.MatchesCriteria(*this) && Item.MatchesCriteria(Src))
+			return true;
+		}
+
+	return false;
 	}

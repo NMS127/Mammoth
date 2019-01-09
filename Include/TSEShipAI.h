@@ -37,6 +37,7 @@ struct SPlayerChangedShipsCtx
 	bool bOldShipWaits = false;				//	If TRUE, old ship waits and orders are set appropriately
 	bool bNoOrderTransfer = false;			//	If TRUE, do not change orders to point to new ship
 	bool bTransferEquipment = false;		//	If TRUE, transfer equipment, such as targeting computer
+	bool bTakeDockingPort = false;			//	If TRUE, new ship replaces old ship in docking port
 	};
 
 //  CAISettings ----------------------------------------------------------------
@@ -151,6 +152,7 @@ class IShipController
 			dataPair,						//	dwData is two 16-bit integers
 			dataString,						//	dwData is a pointer to a CString
 			dataVector,						//	dwData is a pointer to a CVector
+			dataItem,						//	dwData is a pointer to a CItem
 			};
 
 		struct SData
@@ -175,8 +177,13 @@ class IShipController
 					vData(vDataArg)
 				{ }
 
+			SData (const CItem &ItemArg) : iDataType(dataItem),
+					Item(ItemArg)
+				{ }
+
 			inline DWORD AsInteger (void) const { if (iDataType == dataInteger || iDataType == dataPair) return dwData1; else return 0; }
 			inline DWORD AsInteger2 (void) const { if (iDataType == dataPair) return dwData2; else return 0; }
+			inline const CItem &AsItem (void) const { if (iDataType == dataItem) return Item; else return CItem::NullItem(); }
 			inline bool IsIntegerOrPair (void) const { return (iDataType == dataInteger || iDataType == dataPair); }
 
 			EDataTypes iDataType;
@@ -185,11 +192,17 @@ class IShipController
 			DWORD dwData2;
 			CString sData;
 			CVector vData;
+			CItem Item;
 			};
 
-		//	When adding a new order, also add to:
+		//	TO ADD A NEW ORDER:
 		//
-		//	g_OrderTypes in Utilities.cpp
+		//	1.	Add an order to the end of the list (do not add in the middle,
+		//		because numbers are stored in save file).
+		//
+		//	2.	Add order data to m_OrderTypes in IShipController.cpp
+		//
+		//	3.	Add handler in IOrderModule::Create
 
 		enum OrderTypes
 			{
@@ -242,6 +255,9 @@ class IShipController
 			orderGoToPos,				//	dwData = vector destination
 			orderWaitForThreat,			//	dwData = seconds to wait (0 == indefinitely)
 			orderSentry,				//	Sentry mode (for turrets) pTarget = obj to guard (optional); dwData = timer (0 == indefinitely)
+
+			orderFireWeapon,			//	Data = weapon item to fire
+			orderUseItem,				//	Data = item to use
 			};
 
 		enum EShipStatusNotifications
@@ -324,7 +340,6 @@ class IShipController
 		virtual bool OnDestroyCheck (DestructionTypes iCause, const CDamageSource &Attacker) { return true; }
 		virtual void OnDestroyed (SDestroyCtx &Ctx) { }
 		virtual void OnDocked (CSpaceObject *pObj) { }
-		virtual void OnDockedObjChanged (CSpaceObject *pLocation) { }
 		virtual void OnEnterGate (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pStargate, bool bAscend) { }
         virtual void OnFuelConsumed (Metric rFuel, CReactorDesc::EFuelUseTypes iUse) { }
 		virtual void OnHitBarrier (CSpaceObject *pBarrierObj, const CVector &vPos) { CancelDocking(); }
@@ -351,6 +366,36 @@ class IShipController
 		virtual void OnUpdatePlayer (SUpdateCtx &Ctx) { }
 		virtual void OnWeaponStatusChanged (void) { }
 		virtual void OnWreckCreated (CSpaceObject *pWreck) { }
+
+		static EDataTypes GetOrderDataType (OrderTypes iOrder);
+		inline static DWORD GetOrderFlags (OrderTypes iOrder) { return m_OrderTypes[iOrder].dwFlags; }
+		inline static CString GetOrderName (OrderTypes iOrder) { return CString(m_OrderTypes[iOrder].szName); }
+		static OrderTypes GetOrderType (const CString &sString);
+		static bool OrderHasTarget (OrderTypes iOrder, bool *retbRequired = NULL);
+		static bool ParseOrderString (const CString &sValue, OrderTypes *retiOrder, IShipController::SData *retData = NULL);
+
+	private:
+		struct SOrderTypeData
+			{
+			char *szName;
+			char *szTarget;
+			//	-		no target
+			//	*		optional target
+			//	o		required target
+
+			char *szData;
+			//	-		no data
+			//	i		integer (may be optional)
+			//	I		CItem
+			//	2		two integers (encoded in a DWORD)
+			//  s		string data
+			//	v		vector data
+
+			DWORD dwFlags;
+			};
+
+		static const SOrderTypeData m_OrderTypes[];
+		static const int ORDER_TYPES_COUNT;
 	};
 
 class CShipAIHelper

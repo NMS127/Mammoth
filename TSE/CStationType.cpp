@@ -152,10 +152,12 @@
 #define FIELD_TREASURE_VALUE					CONSTLIT("treasureValue")
 #define FIELD_WEAPON_STRENGTH					CONSTLIT("weaponStrength")			//	Strength of weapons (100 = level weapon @ 1/4 fire rate).
 
+#define PROPERTY_LEVEL_FREQUENCY				CONSTLIT("levelFrequency")
 #define PROPERTY_NAME							CONSTLIT("name")
 #define PROPERTY_SHOWS_UNEXPLORED_ANNOTATION	CONSTLIT("showsUnexploredAnnotation")
 #define PROPERTY_SOVEREIGN						CONSTLIT("sovereign")
 #define PROPERTY_SOVEREIGN_NAME					CONSTLIT("sovereignName")
+#define PROPERTY_SYSTEM_CRITERIA				CONSTLIT("systemCriteria")
 
 #define VALUE_FALSE								CONSTLIT("false")
 #define VALUE_SHIPWRECK							CONSTLIT("shipwreck")
@@ -378,6 +380,37 @@ int CStationType::CalcHitsToDestroy (int iLevel) const
 	//	DOne
 
 	return (int)rTotalHits;
+	}
+
+Metric CStationType::CalcMaxAttackDistance (void)
+
+//	CalcMaxAttackDistance
+//
+//	Initializes m_rMaxAttackDistance, if necessary.
+
+	{
+	if (m_fCalcMaxAttackDist 
+			&& g_pUniverse->GetDesignCollection().IsBindComplete())
+		{
+		Metric rBestRange = MAX_ATTACK_DISTANCE;
+
+		for (int i = 0; i < m_iDevicesCount; i++)
+			{
+			if (m_Devices[i].GetCategory() == itemcatWeapon
+					|| m_Devices[i].GetCategory() == itemcatLauncher)
+				{
+				CItem Item(m_Devices[i].GetClass()->GetItemType(), 1);
+				Metric rRange = m_Devices[i].GetMaxRange(CItemCtx(Item));
+				if (rRange > rBestRange)
+					rBestRange = rRange;
+				}
+			}
+
+		m_rMaxAttackDistance = rBestRange;
+		m_fCalcMaxAttackDist = false;
+		}
+
+	return m_rMaxAttackDistance;
 	}
 
 Metric CStationType::CalcSatelliteHitsToDestroy (CXMLElement *pSatellites, int iLevel, bool bIgnoreChance)
@@ -1109,22 +1142,17 @@ ALERROR CStationType::OnBindDesign (SDesignLoadCtx &Ctx)
     //  LATER: We shouldn't have CInstalledDevices here. We should use the same
     //  system that ships use.
 
-	Metric rBestRange = MAX_ATTACK_DISTANCE;
 	for (i = 0; i < m_iDevicesCount; i++)
 		{
 		if (error = m_Devices[i].OnDesignLoadComplete(Ctx))
 			goto Fail;
-
-		if (m_Devices[i].GetCategory() == itemcatWeapon
-				|| m_Devices[i].GetCategory() == itemcatLauncher)
-			{
-			CItem Item(m_Devices[i].GetClass()->GetItemType(), 1);
-			Metric rRange = m_Devices[i].GetMaxRange(CItemCtx(Item));
-			if (rRange > rBestRange)
-				rBestRange = rRange;
-			}
 		}
-	m_rMaxAttackDistance = rBestRange;
+
+	//	We'll recompute attack distance based on weapons later (on demand). We
+	//	can't compute it here because the weapons haven't necessarily bound yet.
+
+	m_rMaxAttackDistance = MAX_ATTACK_DISTANCE;
+	m_fCalcMaxAttackDist = true;
 
 	//	Items
 
@@ -1270,6 +1298,7 @@ ALERROR CStationType::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 	m_iAlertWhenAttacked = pDesc->GetAttributeInteger(ALERT_WHEN_ATTACKED_ATTRIB);
 	m_iAlertWhenDestroyed = pDesc->GetAttributeInteger(ALERT_WHEN_DESTROYED_ATTRIB);
 	m_rMaxAttackDistance = MAX_ATTACK_DISTANCE;
+	m_fCalcMaxAttackDist = false;
 	m_iStealth = pDesc->GetAttributeIntegerBounded(STEALTH_ATTRIB, CSpaceObject::stealthMin, CSpaceObject::stealthMax, CSpaceObject::stealthNormal);
 
 	CString sLayer;
@@ -1693,7 +1722,10 @@ ICCItemPtr CStationType::OnGetProperty (CCodeChainCtx &Ctx, const CString &sProp
 	{
 	CCodeChain &CC = g_pUniverse->GetCC();
 
-	if (strEquals(sProperty, PROPERTY_SHOWS_UNEXPLORED_ANNOTATION))
+	if (strEquals(sProperty, PROPERTY_LEVEL_FREQUENCY))
+		return ICCItemPtr(CC.CreateString(m_RandomPlacement.GetLevelFrequency()));
+
+	else if (strEquals(sProperty, PROPERTY_SHOWS_UNEXPLORED_ANNOTATION))
 		return ICCItemPtr(CC.CreateBool(ShowsUnexploredAnnotation()));
 
 	else if (strEquals(sProperty, PROPERTY_SOVEREIGN))
@@ -1705,6 +1737,17 @@ ICCItemPtr CStationType::OnGetProperty (CCodeChainCtx &Ctx, const CString &sProp
 			return ICCItemPtr(CC.CreateNil());
 
 		return ICCItemPtr(m_pSovereign->GetProperty(Ctx, PROPERTY_NAME));
+		}
+	else if (strEquals(sProperty, PROPERTY_SYSTEM_CRITERIA))
+		{
+        const CTopologyNode::SCriteria *pSystemCriteria;
+        if (!m_RandomPlacement.HasSystemCriteria(&pSystemCriteria))
+			return ICCItemPtr(CC.CreateNil());
+
+		if (pSystemCriteria->AttribCriteria.IsEmpty())
+			return ICCItemPtr(CC.CreateNil());
+
+		return ICCItemPtr(CC.CreateString(pSystemCriteria->AttribCriteria.AsString()));
 		}
 
 	else

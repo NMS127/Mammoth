@@ -5,6 +5,8 @@
 #include "PreComp.h"
 #include "math.h"
 
+#define ALWAYS_SEPARATE_ENEMIES
+
 #ifdef DEBUG
 //#define DEBUG_STATION_TABLE_CACHE
 //#define DEBUG_STRESS_TEST
@@ -169,6 +171,12 @@
 
 const Metric DEFAULT_EXCLUSION =		50.0 * LIGHT_SECOND;
 const Metric DEFAULT_EXCLUSION2 =		DEFAULT_EXCLUSION * DEFAULT_EXCLUSION;
+
+constexpr int FILL_LOCATIONS_MAX_TRIES =		10;
+constexpr int RANDOM_ANGLE_MAX_TRIES =			20;
+constexpr int DIST_ANGLE_MAX_TRIES =			10;
+constexpr int PLACE_RANDOM_STATION_MAX_TRIES =	10;
+constexpr int RANDOM_POSITION_MAX_TRIES =		100;
 
 static char g_ProbabilitiesAttrib[] = "probabilities";
 
@@ -644,7 +652,11 @@ ALERROR DistributeStationsAtRandomLocations (SSystemCreateCtx *pCtx, CXMLElement
 	CString sEnemyOnlyCriteria = (sStationCriteria.IsBlank() ? REQUIRE_ENEMY : strPatternSubst(CONSTLIT("%s,%s"), sStationCriteria, REQUIRE_ENEMY));
 	CString sFriendOnlyCriteria = (sStationCriteria.IsBlank() ? REQUIRE_FRIEND : strPatternSubst(CONSTLIT("%s,%s"), sStationCriteria, REQUIRE_FRIEND));
 
+#ifdef ALWAYS_SEPARATE_ENEMIES
+	bool bSeparateEnemies = true;
+#else
 	bool bSeparateEnemies = pDesc->GetAttributeBool(SEPARATE_ENEMIES_ATTRIB);
+#endif
 
 	PushDebugStack(pCtx, strPatternSubst(CONSTLIT("FillLocations locationCriteria=%s stationCriteria=%s"), pDesc->GetAttribute(LOCATION_CRITERIA_ATTRIB), sStationCriteria));
 
@@ -663,7 +675,12 @@ ALERROR DistributeStationsAtRandomLocations (SSystemCreateCtx *pCtx, CXMLElement
 			{
 			bool bEnemy;
 			if (error = CreateAppropriateStationAtRandomLocation(pCtx, LocationTable, sStationCriteria, bSeparateEnemies, &bEnemy))
+				{
+				if (error == ERR_NOTFOUND)
+					continue;
+
 				return error;
+				}
 
 			if (bEnemy)
 				iEnemies--;
@@ -673,14 +690,24 @@ ALERROR DistributeStationsAtRandomLocations (SSystemCreateCtx *pCtx, CXMLElement
 		else if (iEnemies)
 			{
 			if (error = CreateAppropriateStationAtRandomLocation(pCtx, LocationTable, sEnemyOnlyCriteria, bSeparateEnemies))
+				{
+				if (error == ERR_NOTFOUND)
+					continue;
+
 				return error;
+				}
 
 			iEnemies--;
 			}
 		else if (iFriends)
 			{
 			if (error = CreateAppropriateStationAtRandomLocation(pCtx, LocationTable, sFriendOnlyCriteria, bSeparateEnemies))
+				{
+				if (error == ERR_NOTFOUND)
+					continue;
+
 				return error;
+				}
 
 			iFriends--;
 			}
@@ -694,6 +721,7 @@ ALERROR DistributeStationsAtRandomLocations (SSystemCreateCtx *pCtx, CXMLElement
 	//	See how many locations we actually filled. If we filled fewer locations
 	//	than expected, then report the actual number.
 
+#ifdef DEBUG_FILL_LOCATIONS
 	int iFilled = iLocationCount - LocationTable.GetCount();
 	if (iFilled < iCount 
 			&& g_pUniverse->InDebugMode()
@@ -701,6 +729,7 @@ ALERROR DistributeStationsAtRandomLocations (SSystemCreateCtx *pCtx, CXMLElement
 		{
 		g_pUniverse->LogOutput(strPatternSubst(CONSTLIT("%s: Only filled %d of %d locations (%d%%)"), pCtx->pTopologyNode->GetID(), iFilled, iLocationCount, iFilled * 100 / iLocationCount));
 		}
+#endif
 
 	PopDebugStack(pCtx);
 	return NOERROR;
@@ -724,10 +753,10 @@ ALERROR CreateAppropriateStationAtRandomLocation (SSystemCreateCtx *pCtx,
 
 	//	Keep trying for a while to make sure that we find something that fits
 
-	int iTries = 10;
+	int iTries = FILL_LOCATIONS_MAX_TRIES;
 	while (iTries > 0)
 		{
-		STATION_PLACEMENT_OUTPUT(strPatternSubst(CONSTLIT("try %d\n"), 11 - iTries).GetASCIIZPointer());
+		STATION_PLACEMENT_OUTPUT(strPatternSubst(CONSTLIT("try %d\n"), (FILL_LOCATIONS_MAX_TRIES + 1) - iTries).GetASCIIZPointer());
 
 		//	Pick a random location that fits the criteria
 
@@ -756,9 +785,15 @@ ALERROR CreateAppropriateStationAtRandomLocation (SSystemCreateCtx *pCtx,
 
 			if (error == ERR_NOTFOUND)
 				{
+				iTries--;
+
 				//	No more tries
 
-				if (--iTries == 0 && g_pUniverse->InDebugMode())
+				if (iTries == 0)
+					return ERR_NOTFOUND;
+
+#ifdef DEBUG_FILL_LOCATIONS
+				if (iTries == 0 && g_pUniverse->InDebugMode())
 					{
 					g_pUniverse->LogOutput(CONSTLIT("Warning: Ran out of tries in FillLocations"));
 					g_pUniverse->LogOutput(strPatternSubst(CONSTLIT("Level: %d; Loc attribs: %s; Node attribs: %s"), 
@@ -798,6 +833,7 @@ ALERROR CreateAppropriateStationAtRandomLocation (SSystemCreateCtx *pCtx,
 
 					DumpDebugStack(pCtx);
 					}
+#endif
 
 				continue;
 				}
@@ -1396,7 +1432,7 @@ ALERROR CreateOrbitals (SSystemCreateCtx *pCtx,
 			for (i = 0; i < iCount; i++)
 				{
 				bool bAngleOK = true;
-				int iTries = 20;
+				int iTries = RANDOM_ANGLE_MAX_TRIES;
 
 				do
 					{
@@ -1462,12 +1498,11 @@ ALERROR CreateOrbitals (SSystemCreateCtx *pCtx,
 
 		else
 			{
-			const int MAX_TRIES = 10;
-			int iTries = MAX_TRIES;
+			int iTries = DIST_ANGLE_MAX_TRIES;
 
 			do
 				{
-				int iJitter = 100 * (MAX_TRIES - iTries) / MAX_TRIES;
+				int iJitter = 100 * (DIST_ANGLE_MAX_TRIES - iTries) / DIST_ANGLE_MAX_TRIES;
 
 				if (error = GenerateAngles(pCtx, sAngle, iCount, rAngle, iJitter))
 					return error;
@@ -1756,13 +1791,19 @@ ALERROR CreateRandomStationAtAppropriateLocation (SSystemCreateCtx *pCtx, CXMLEl
 	STATION_PLACEMENT_OUTPUT("CreateRandomStationAtAppropriateLocation\n");
 
 	CString sStationCriteria = pDesc->GetAttribute(STATION_CRITERIA_ATTRIB);
+
+#ifdef ALWAYS_SEPARATE_ENEMIES
+	bool bSeparateEnemies = true;
+#else
 	bool bSeparateEnemies = pDesc->GetAttributeBool(SEPARATE_ENEMIES_ATTRIB);
+#endif
 
 	PushDebugStack(pCtx, strPatternSubst(CONSTLIT("PlaceRandomStation stationCriteria=%s"), sStationCriteria));
 
 	//	Keep trying for a while to make sure that we find something that fits
 
-	int iTries = 10;
+	bool bSuccess = false;
+	int iTries = PLACE_RANDOM_STATION_MAX_TRIES;
 	while (iTries > 0)
 		{
 		//	Pick a random station type that fits the criteria
@@ -1839,9 +1880,13 @@ ALERROR CreateRandomStationAtAppropriateLocation (SSystemCreateCtx *pCtx, CXMLEl
 
 		//	No more tries
 
+		bSuccess = true;
 		break;
 		}
 
+	if (!bSuccess && g_pUniverse->InDebugMode())
+		g_pUniverse->LogOutput(strPatternSubst(CONSTLIT("%s: Ran out of tries."), pCtx->pSystem->GetName()));
+		
 	PopDebugStack(pCtx);
 	return NOERROR;
 	}
@@ -2773,7 +2818,7 @@ ALERROR CreateSystemObject (SSystemCreateCtx *pCtx,
 
 		//	Parse the code
 
-		ICCItem *pCode = g_pUniverse->GetCC().Link(pObj->GetContentText(0), 0, NULL);
+		ICCItem *pCode = g_pUniverse->GetCC().Link(pObj->GetContentText(0));
 		if (pCode->IsError())
 			{
 			pCtx->sError = strPatternSubst(CONSTLIT("<Code>: %s"), pCode->GetStringValue());
@@ -3048,7 +3093,7 @@ ALERROR GenerateAngles (SSystemCreateCtx *pCtx, const CString &sAngle, int iCoun
 		for (i = 0; i < iCount; i++)
 			{
 			bool bAngleIsOK;
-			int iTries = 20;
+			int iTries = RANDOM_ANGLE_MAX_TRIES;
 
 			do 
 				{
@@ -3183,7 +3228,7 @@ void GenerateRandomPosition (SSystemCreateCtx *pCtx, CStationType *pStationToPla
 	//	objects.
 
 	COrbit NewOrbit;
-	int iTries = 100;
+	int iTries = RANDOM_POSITION_MAX_TRIES;
 	bool bFound = false;
 	while (iTries-- > 0 && !bFound)
 		{
@@ -3833,10 +3878,6 @@ ALERROR CSystem::CreateFromXML (CUniverse *pUniv,
 
 						if (error == ERR_NOTFOUND)
 							{
-							CStationEncounterDesc::SExclusionDesc Exclusion;
-							pType->GetExclusionDesc(Exclusion);
-							Metric rExclusion2 = Max(DEFAULT_EXCLUSION2, Max(Exclusion.rAllExclusionRadius2, Exclusion.rEnemyExclusionRadius2));
-
 							GenerateRandomPosition(&Ctx, pType, &OrbitDesc);
 							iLocation = -1;
 							}
@@ -3923,11 +3964,68 @@ ALERROR CSystem::CreateFromXML (CUniverse *pUniv,
 			DumpDebugStack(&Ctx);
 			}
 
+#ifdef DEBUG_EXCLUSION_RADIUS
+	if (g_pUniverse->InDebugMode())
+		pSystem->ValidateExclusionRadius();
+#endif
+
 	//	Done
 
 	*retpSystem = pSystem;
 
 	return NOERROR;
+	}
+
+void CSystem::ValidateExclusionRadius (void) const
+
+//	ValidateExclusionRadius
+//
+//	Check to see if all objects have a proper exclusion radius, and logs any 
+//	that are not.
+
+	{
+	for (int i = 0; i < GetObjectCount(); i++)
+		{
+		CSpaceObject *pObj = GetObject(i);
+		if (pObj == NULL
+				|| !pObj->ShowMapLabel()
+				|| !pObj->CanAttack())
+			continue;
+
+		CStationType *pEncounter = pObj->GetEncounterInfo();
+		if (pEncounter == NULL)
+			continue;
+
+		CStationEncounterDesc::SExclusionDesc Exclusion;
+		pEncounter->GetExclusionDesc(Exclusion);
+		if (!Exclusion.bHasEnemyExclusion)
+			continue;
+
+		ValidateExclusionRadius(pObj, Exclusion);
+		}
+	}
+
+void CSystem::ValidateExclusionRadius (CSpaceObject *pObj, const CStationEncounterDesc::SExclusionDesc &Exclusion) const
+
+//	ValidateExclusionRadius
+//
+//	Make sure this object is not too close to enemies.
+
+	{
+	for (int j = 0; j < GetObjectCount(); j++)
+		{
+		CSpaceObject *pEnemyObj = GetObject(j);
+		if (pEnemyObj == NULL
+				|| !pEnemyObj->CanAttack()
+				|| pEnemyObj->GetEncounterInfo() == NULL
+				|| !pObj->IsEnemy(pEnemyObj))
+			continue;
+
+		if (pObj->GetDistance2(pEnemyObj) < Exclusion.rEnemyExclusionRadius2)
+			{
+			g_pUniverse->LogOutput(strPatternSubst(CONSTLIT("%s: %s has enemies in radius (%d ls): %s."), GetName(), pObj->GetNounPhrase(), mathRound(pObj->GetDistance(pEnemyObj) / LIGHT_SECOND), pEnemyObj->GetNounPhrase()));
+			}
+		}
 	}
 
 ALERROR CSystem::CreateLookup (SSystemCreateCtx *pCtx, const CString &sTable, const COrbit &OrbitDesc, CXMLElement *pSubTables)

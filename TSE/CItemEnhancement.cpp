@@ -255,6 +255,76 @@ bool CItemEnhancement::CalcNewHPBonus (const CItem &Item, const CItemEnhancement
 	return (iNewBonus != iCurBonus);
 	}
 
+bool CItemEnhancement::CalcRegen (CItemCtx &ItemCtx, int iTicksPerUpdate, CRegenDesc &retRegen, ERegenTypes *retiType) const
+
+//	CalcRegen
+//
+//	Initializes a regen structure (or return FALSE if no regen).
+
+	{
+	ERegenTypes iRegenType;
+
+	//	Figure out how much we regenerate
+
+	switch (GetType())
+		{
+		case etPhotoRegenerate:
+			{
+			//	Skip disadvantages (decay)
+
+			if (IsDisadvantage())
+				return false;
+
+			//	Standard regeneration is 1% of standard armor HP per 180 ticks
+
+			iRegenType = regenSolar;
+			retRegen.InitFromRegen(0.01 * CArmorClass::GetStdHP(ItemCtx.GetItem().GetLevel()), iTicksPerUpdate);
+			break;
+			}
+
+		case etRegenerate:
+		case etHealerRegenerate:
+			{
+			//	Skip disadvantages (decay)
+
+			if (IsDisadvantage())
+				return false;
+
+			if (GetType() == etHealerRegenerate)
+				iRegenType = regenFromHealer;
+			else
+				iRegenType = regenStandard;
+
+			//	Get the regen rate.
+
+			int iRegen = GetDataX();
+
+			//	If regen rate is 0, then we use standard regeneration, which is
+			//	1% of standard armor HP per 180 ticks.
+
+			if (iRegen == 0)
+				retRegen.InitFromRegen(0.01 * CArmorClass::GetStdHP(ItemCtx.GetItem().GetLevel()), iTicksPerUpdate);
+
+			//	Otherwise it is specified
+
+			else
+				retRegen.InitFromRegen(iRegen, iTicksPerUpdate);
+
+			break;
+			}
+
+		default:
+			return false;
+		}
+
+	//	Success
+
+	if (retiType)
+		*retiType = iRegenType;
+
+	return true;
+	}
+
 bool CItemEnhancement::CanBeCombinedWith (const CItemEnhancement &NewEnhancement) const
 
 //	CanBeCombinedWith
@@ -875,166 +945,6 @@ int CItemEnhancement::GetHPBonus (void) const
 		}
 	}
 
-CString CItemEnhancement::GetEnhancedDesc (const CItem &Item, CSpaceObject *pInstalled, CInstalledDevice *pDevice) const
-
-//	GetEnhancedDesc
-//
-//	Get short description of enhancement.
-//
-//	NOTE: This currently include bonuses confered by other ship systems (stored in
-//	the device structure. In the future we need a better mechanism)
-
-	{
-	const CItemEnhancementStack *pAllEnhancements = (pDevice ? pDevice->GetEnhancementStack() : NULL);
-
-	switch (GetType())
-		{
-		case etHPBonus:
-		case etStrengthen:
-			{
-			switch (Item.GetType()->GetCategory())
-				{
-				case itemcatWeapon:
-				case itemcatLauncher:
-				case itemcatShields:
-					{
-					int iDamageBonus;
-
-					//	See if this device is installed; if so, then the bonus is
-					//	calculated and cached in the device; we do this so that we can
-					//	include bonuses from all sources.
-
-					if (pAllEnhancements)
-						iDamageBonus = pAllEnhancements->GetBonus();
-					else
-						iDamageBonus = GetHPBonus();
-
-					//	Bonus
-
-					if (iDamageBonus < 0)
-						return strPatternSubst(CONSTLIT("%d%%"), iDamageBonus);
-					else
-						return strPatternSubst(CONSTLIT("+%d%%"), iDamageBonus);
-					}
-
-				default:
-					if (IsDisadvantage())
-						return strPatternSubst(CONSTLIT("-%d%%"), 100 - GetHPAdj());
-					else
-						return strPatternSubst(CONSTLIT("+%d%%"), GetHPAdj() - 100);
-				}
-			}
-
-		case etRegenerate:
-		case etHealerRegenerate:
-			return (IsDisadvantage() ? CONSTLIT("-decay") : CONSTLIT("+regen"));
-
-		case etReflect:
-			return strPatternSubst((IsDisadvantage() ? CONSTLIT("-%s transparent") : CONSTLIT("+%s reflect")),
-					::GetDamageShortName(GetDamageTypeField()));
-
-		case etRepairOnHit:
-			return strPatternSubst(CONSTLIT("+%s regen"), ::GetDamageShortName(GetDamageTypeField()));
-
-		case etResist:
-			return (IsDisadvantage() ? CONSTLIT("-vulnerable") : CONSTLIT("+resistant"));
-
-		case etResistEnergy:
-			return (IsDisadvantage() ? CONSTLIT("-energy vulnerable") : CONSTLIT("+energy resist"));
-
-		case etResistMatter:
-			return (IsDisadvantage() ? CONSTLIT("-matter vulnerable") : CONSTLIT("+matter resist"));
-
-		case etResistByLevel:
-			{
-			if (IsDisadvantage())
-				return strPatternSubst(CONSTLIT("-%s -%s"), strCapitalizeWords(::GetDamageShortName(GetDamageTypeField())), strCapitalizeWords(::GetDamageShortName((DamageTypes)(GetDamageTypeField() + 1))));
-			else
-				return strPatternSubst(CONSTLIT("+%s +%s"), strCapitalizeWords(::GetDamageShortName(GetDamageTypeField())), strCapitalizeWords(::GetDamageShortName((DamageTypes)(GetDamageTypeField() + 1))));
-			}
-
-		case etResistByDamage:
-		case etResistHPBonus:
-			return strPatternSubst((IsDisadvantage() ? CONSTLIT("-%s") : CONSTLIT("+%s")), ::GetDamageShortName(GetDamageTypeField()));
-
-		case etResistByDamage2:
-			{
-			if (IsDisadvantage())
-				return strPatternSubst(CONSTLIT("-%s -%s"), ::GetDamageShortName(GetDamageTypeField()), ::GetDamageShortName((DamageTypes)(GetDamageTypeField() + 2)));
-			else
-				{
-				switch (GetDamageTypeField())
-					{
-					case damageLaser:
-						return CONSTLIT("+ablative");
-
-					case damageKinetic:
-						return CONSTLIT("+reactive");
-
-					default:
-						return strPatternSubst(CONSTLIT("+%s +%s"), 
-								::GetDamageShortName(GetDamageTypeField()), 
-								::GetDamageShortName((DamageTypes)(GetDamageTypeField() + 2)));
-					}
-				}
-			}
-
-		case etSpecialDamage:
-			{
-			switch (GetLevel2())
-				{
-				case specialRadiation:
-					return CONSTLIT("+radiation immune");
-
-				case specialBlinding:
-					return CONSTLIT("+blind immune");
-
-				case specialEMP:
-					return CONSTLIT("+EMP immune");
-
-				case specialDeviceDamage:
-					return CONSTLIT("+device protect");
-
-				case specialDisintegration:
-					return CONSTLIT("+disintegration immune");
-
-				default:
-					return CONSTLIT("+immune");
-				}
-			}
-
-		case etImmunityIonEffects:
-			return (IsDisadvantage() ? CONSTLIT("-no shields") : CONSTLIT("+ionize immune"));
-
-		case etPhotoRegenerate:
-			return CONSTLIT("+photo-regen");
-
-		case etPhotoRecharge:
-			return CONSTLIT("+solar");
-
-		case etPowerEfficiency:
-			return (IsDisadvantage() ? CONSTLIT("-drain") : CONSTLIT("+efficient"));
-
-		case etSpeed:
-		case etSpeedOld:
-			return (IsDisadvantage() ? CONSTLIT("-slow") : CONSTLIT("+fast"));
-
-		case etTracking:
-			return (IsDisadvantage() ? CONSTLIT("-blinded") : CONSTLIT("+tracking"));
-
-		case etOmnidirectional:
-			if (IsDisadvantage())
-				return CONSTLIT("-stuck");
-			else if (GetDataX() == 0)
-				return CONSTLIT("+omnidirectional");
-			else
-				return CONSTLIT("+swivel");
-
-		default:
-			return CONSTLIT("+unknown");
-		}
-	}
-
 int CItemEnhancement::GetActivateRateAdj (int *retiMinDelay, int *retiMaxDelay) const
 
 //	GetActivateRateAdj
@@ -1258,6 +1168,21 @@ int CItemEnhancement::GetReflectChance (DamageTypes iDamage) const
 		default:
 			return 0;
 		}
+	}
+
+Metric CItemEnhancement::GetRegen180 (CItemCtx &Ctx, int iTicksPerUpdate) const
+
+//	GetRegen180
+//
+//	Returns the number of HP regenerated per 180 ticks.
+
+	{
+	CRegenDesc Regen;
+
+	if (!CalcRegen(Ctx, iTicksPerUpdate, Regen))
+		return 0.0;
+
+	return Regen.GetHPPer180(iTicksPerUpdate);
 	}
 
 int CItemEnhancement::GetResistHPBonus (void) const
@@ -2025,58 +1950,8 @@ bool CItemEnhancement::UpdateArmorRegen (CItemCtx &ArmorCtx, SUpdateCtx &UpdateC
 	ERegenTypes iRegenType;
 	CRegenDesc Regen;
 
-	//	Figure out how much we regenerate
-
-	switch (GetType())
-		{
-		case etPhotoRegenerate:
-			{
-			//	Skip disadvantages (decay)
-
-			if (IsDisadvantage())
-				return false;
-
-			//	Standard regeneration is 1% of standard armor HP per 180 ticks
-
-			iRegenType = regenSolar;
-			Regen.InitFromRegen(0.01 * CArmorClass::GetStdHP(ArmorCtx.GetItem().GetLevel()), CArmorClass::TICKS_PER_UPDATE);
-			break;
-			}
-
-		case etRegenerate:
-		case etHealerRegenerate:
-			{
-			//	Skip disadvantages (decay)
-
-			if (IsDisadvantage())
-				return false;
-
-			if (GetType() == etHealerRegenerate)
-				iRegenType = regenFromHealer;
-			else
-				iRegenType = regenStandard;
-
-			//	Get the regen rate.
-
-			int iRegen = GetDataX();
-
-			//	If regen rate is 0, then we use standard regeneration, which is
-			//	1% of standard armor HP per 180 ticks.
-
-			if (iRegen == 0)
-				Regen.InitFromRegen(0.01 * CArmorClass::GetStdHP(ArmorCtx.GetItem().GetLevel()), CArmorClass::TICKS_PER_UPDATE);
-
-			//	Otherwise it is specified
-
-			else
-				Regen.InitFromRegen(iRegen, CArmorClass::TICKS_PER_UPDATE);
-
-			break;
-			}
-
-		default:
-			return false;
-		}
+	if (!CalcRegen(ArmorCtx, CArmorClass::TICKS_PER_UPDATE, Regen, &iRegenType))
+		return false;
 
 	//	Regenerate
 

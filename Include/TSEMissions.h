@@ -46,6 +46,7 @@ class CMission : public CSpaceObject
 		inline bool CleanNonPlayer (void) const { return m_pType->CleanNonPlayer(); }
 		inline DWORD GetAcceptedOn (void) const { return m_dwAcceptedOn; }
 		inline int GetPriority (void) const { return m_pType->GetPriority(); }
+		inline bool IsAccepted (void) const { return (m_iStatus == statusAccepted); }
 		inline bool IsActive (void) const { return (m_iStatus == statusAccepted || (!m_fDebriefed && (m_iStatus == statusPlayerSuccess || m_iStatus == statusPlayerFailure))); }
 		inline bool IsClosed (void) const { return (!IsActive() && IsCompleted()); }
 		inline bool IsCompleted (void) const { return (m_iStatus == statusPlayerSuccess || m_iStatus == statusPlayerFailure || m_iStatus == statusSuccess || m_iStatus == statusFailure); }
@@ -59,6 +60,7 @@ class CMission : public CSpaceObject
 		inline bool KeepsStats (void) const { return m_pType->KeepsStats(); }
 		bool MatchesCriteria (CSpaceObject *pSource, const SCriteria &Criteria);
 		void OnPlayerEnteredSystem (CSpaceObject *pPlayer);
+		bool RefreshSummary (void);
 		bool Reward (ICCItem *pData, ICCItem **retpResult = NULL);
 		bool SetAccepted (void);
 		bool SetDeclined (ICCItem **retpResult = NULL);
@@ -122,6 +124,7 @@ class CMission : public CSpaceObject
 		DWORD m_dwAcceptedOn;				//	Tick on which mission was accepted
 		DWORD m_dwLeftSystemOn;				//	Left the system on this tick (only used if the mission
 											//		times out when out of the system).
+		DWORD m_dwCompletedOn;				//	Tick on which mission was completed
 
 		CString m_sTitle;					//	Mission title
 		CString m_sInstructions;			//	Current instructions
@@ -150,10 +153,14 @@ class CMissionList
 		void Delete (int iIndex);
 		void Delete (CMission *pMission);
 		void DeleteAll (void);
+		void FireOnSystemStarted (DWORD dwElapsedTime);
+		void FireOnSystemStopped (void);
 		inline int GetCount (void) const { return m_List.GetCount(); }
 		inline CMission *GetMission (int iIndex) const { return m_List[iIndex]; }
 		CMission *GetMissionByID (DWORD dwID) const;
 		void Insert (CMission *pMission);
+		void NotifyOnNewSystem (CSystem *pSystem);
+		void NotifyOnPlayerEnteredSystem (CSpaceObject *pPlayerShip);
 		ALERROR ReadFromStream (SLoadCtx &Ctx, CString *retsError);
 		ALERROR WriteToStream (IWriteStream *pStream, CString *retsError);
 

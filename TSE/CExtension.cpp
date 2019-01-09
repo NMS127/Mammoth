@@ -413,8 +413,9 @@ ALERROR CExtension::CreateBaseFile (SDesignLoadCtx &Ctx, EGameTypes iGame, CXMLE
 	if (pExtension->m_dwAPIVersion > API_VERSION)
 		{
 		pExtension->m_pEntities = NULL;	//	Let our parent clean up
+		pExtension->m_pRootXML = NULL;
 		delete pExtension;
-		Ctx.sError = CONSTLIT("Newer version of the Transcendence engine is required.");
+		Ctx.sError = strPatternSubst(CONSTLIT("Newer version of %s is required."), fileGetProductName());
 		return ERR_FAIL;
 		}
 
@@ -638,7 +639,7 @@ ALERROR CExtension::CreateExtensionFromRoot (const CString &sFilespec, CXMLEleme
 	//	If this is a later version, then disabled it
 
 	if (pExtension->m_dwAPIVersion > API_VERSION)
-		pExtension->SetDisabled(CONSTLIT("Requires a newer version of Transcendence.exe"));
+		pExtension->SetDisabled(strPatternSubst(CONSTLIT("Requires a newer version of %s"), fileGetProductName()));
 
 	//	Release
 
@@ -902,6 +903,22 @@ ALERROR CExtension::ExecuteGlobals (SDesignLoadCtx &Ctx)
 	DEBUG_CATCH
 	}
 
+bool CExtension::IsLibraryInUse (DWORD dwUNID) const
+
+//	IsLibraryInUse
+//
+//	Returns TRUE if this extension is using the given library.
+
+	{
+	for (int i = 0; i < GetLibraryCount(); i++)
+		{
+		if (dwUNID == GetLibrary(i).dwUNID)
+			return true;
+		}
+
+	return false;
+	}
+
 CG32bitImage *CExtension::GetCoverImage (void) const
 
 //	GetCoverImage
@@ -1007,7 +1024,7 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 			{
 			if (iDesiredState == loadNone || iDesiredState == loadEntities)
 				return NOERROR;
-			else if (iDesiredState == loadAdventureDesc && m_iLoadState == loadAdventureDesc)
+			else if (iDesiredState == m_iLoadState)
 				return NOERROR;
 
 			//	Open the file
@@ -1020,10 +1037,11 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 			//	Setup
 
 			SDesignLoadCtx Ctx;
+			Ctx.pExtension = this;
 			Ctx.sResDb = m_sFilespec;
 			Ctx.pResDb = &ExtDb;
 			Ctx.bNoResources = Options.bNoResources;
-			Ctx.bLoadAdventureDesc = (iDesiredState == loadAdventureDesc && m_iType == extAdventure);
+			Ctx.bLoadAdventureDesc = (iDesiredState == loadAdventureDesc);
 			Ctx.sErrorFilespec = m_sFilespec;
 
 			//	If this is a registered extension then compute a digest for the
@@ -1072,10 +1090,6 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 					}
 				}
 
-			//	Set up context
-
-			Ctx.pExtension = this;
-
 			//	Load all the design elements
 
 			for (i = 0; i < m_pRootXML->GetContentElementCount(); i++)
@@ -1099,7 +1113,7 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 
 			//	Done
 
-			m_iLoadState = (m_iType == extAdventure ? iDesiredState : loadComplete);
+			m_iLoadState = iDesiredState;
 
 			//	If we get this far and we have no libraries, then include the 
 			//	compatibility library.
@@ -1109,6 +1123,7 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 
 			//	Debug output
 
+#ifdef DEBUG_LOAD_EXTENSIONS
 			switch (m_iType)
 				{
 				case extAdventure:
@@ -1126,6 +1141,7 @@ ALERROR CExtension::Load (ELoadStates iDesiredState, IXMLParserController *pReso
 					kernelDebugLogPattern("Loaded library: %s", m_sFilespec);
 					break;
 				}
+#endif
 
 			return NOERROR;
 			}
@@ -1353,15 +1369,18 @@ ALERROR CExtension::LoadGlobalsElement (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 
 	//	Parse the code and keep it
 
-	ICCItem *pCode = CCCtx.Link(pDesc->GetContentText(0), 0, NULL);
-	if (pCode->IsError())
+	ICCItemPtr pCode = CCCtx.LinkCode(pDesc->GetContentText(0));
+	if (pCode->IsNil())
+		return NOERROR;
+
+	else if (pCode->IsError())
 		{
 		Ctx.sError = strPatternSubst(CONSTLIT("%s globals: %s"), Ctx.sErrorFilespec, pCode->GetStringValue());
 		return ERR_FAIL;
 		}
 
 	SGlobalsEntry *pEntry = m_Globals.Insert();
-	pEntry->pCode = pCode;
+	pEntry->pCode = pCode->Reference();
 	pEntry->sFilespec = Ctx.sErrorFilespec;
 
 #ifdef DEBUG_GLOBALS

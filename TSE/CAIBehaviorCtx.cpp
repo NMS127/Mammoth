@@ -223,7 +223,7 @@ void CAIBehaviorCtx::CalcBestWeapon (CShip *pShip, CSpaceObject *pTarget, Metric
 
 			//	If this weapon is not working, then skip it
 
-			if (pWeapon->IsEmpty() || pWeapon->IsDamaged() || pWeapon->IsDisrupted() || !pWeapon->IsEnabled())
+			if (pWeapon->IsEmpty() || !pWeapon->IsWorking())
 				continue;
 
 			//	If this is a secondary weapon, remember that we have some and 
@@ -337,18 +337,11 @@ void CAIBehaviorCtx::CalcBestWeapon (CShip *pShip, CSpaceObject *pTarget, Metric
 
 			int iAdj = 100 + ((pShip->GetDestiny() % 60) - 30);
 			m_rBestWeaponRange = m_rBestWeaponRange * (iAdj * 0.01);
-
-			//	If this weapon is not pointed forwards, then remember that 
-			//	because it will affect how we maneuver.
-
-			int iWeaponFacing = m_pBestWeapon->GetRotation();
-			m_fBestWeaponIsBackwards = (iWeaponFacing > 30 && iWeaponFacing < 330);
 			}
 		else
 			{
 			m_iBestWeapon = devNone;
 			m_pBestWeapon = NULL;
-			m_fBestWeaponIsBackwards = false;
 
 			//	If we can't find a good weapon, at least set the weapon range so that we close
 			//	to secondary weapon range.
@@ -394,7 +387,7 @@ void CAIBehaviorCtx::CalcInvariants (CShip *pShip)
 	Metric rAimRange = (GetFireRangeAdj() * rPrimaryRange) / (100.0 + ((pShip->GetDestiny() % 8) + 4));
 	if (rAimRange < 1.5 * MIN_TARGET_DIST)
 		rAimRange = 1.5 * MIN_TARGET_DIST;
-	m_rPrimaryAimRange2 = 4.0 * rAimRange * rAimRange;
+	m_rPrimaryAimRange2 = rAimRange * rAimRange;
 
 	//	Compute the minimum flanking distance. If we're very maneuverable,
 	//	can get in closer because we can turn faster to adjust for the target's
@@ -435,7 +428,7 @@ void CAIBehaviorCtx::CalcInvariants (CShip *pShip)
 		{
 		CInstalledDevice *pDevice = pShip->GetDevice(i);
 
-		if (pDevice->IsEmpty() || pDevice->IsDamaged() || pDevice->IsDisrupted() || !pDevice->IsEnabled())
+		if (pDevice->IsEmpty() || !pDevice->IsWorking())
 			continue;
 
 		switch (pDevice->GetCategory())
@@ -909,14 +902,14 @@ void CAIBehaviorCtx::CommunicateWithEscorts (CShip *pShip, MessageTypes iMessage
 //	Sends a message to the ship's escorts
 
 	{
-	int i;
+	DEBUG_TRY
 
 	if (HasEscorts())
 		{
 		bool bEscortsFound = false;
 
 		CSovereign *pSovereign = pShip->GetSovereign();
-		for (i = 0; i < pShip->GetSystem()->GetObjectCount(); i++)
+		for (int i = 0; i < pShip->GetSystem()->GetObjectCount(); i++)
 			{
 			CSpaceObject *pObj = pShip->GetSystem()->GetObject(i);
 
@@ -934,6 +927,8 @@ void CAIBehaviorCtx::CommunicateWithEscorts (CShip *pShip, MessageTypes iMessage
 		if (!bEscortsFound)
 			SetHasEscorts(false);
 		}
+
+	DEBUG_CATCH
 	}
 
 void CAIBehaviorCtx::DebugPaintInfo (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx)

@@ -88,17 +88,23 @@ class CDebugOptions
 	{
 	public:
 		ICCItemPtr GetProperty (const CString &sProperty) const;
+		inline bool IsShowAIDebugEnbled (void) const { return m_bShowAIDebug; }
 		inline bool IsShowBoundsEnabled (void) const { return m_bShowBounds; }
+		inline bool IsShowFacingsAngleEnabled (void) const { return m_bShowFacingsAngle; }
 		inline bool IsShowLineOfFireEnabled (void) const { return m_bShowLineOfFire; }
 		inline bool IsShowNavPathsEnabled (void) const { return m_bShowNavPaths; }
+		inline bool IsShowNodeAttributesEnabled (void) const { return m_bShowNodeAttributes; }
 		bool SetProperty (const CString &sProperty, ICCItem *pValue, CString *retsError = NULL);
 		
 	private:
 		ICCItemPtr GetMemoryUse (void) const;
 
+		bool m_bShowAIDebug = false;
 		bool m_bShowBounds = false;
 		bool m_bShowLineOfFire = false;
 		bool m_bShowNavPaths = false;
+		bool m_bShowFacingsAngle = false;
+		bool m_bShowNodeAttributes = false;
 	};
 
 //	SFX Options ----------------------------------------------------------------
@@ -194,6 +200,7 @@ class CUniverse
 			CString sCollectionFolder;					//	If non-blank, use this as Collection folder (and remember it)
 			TArray<CString> ExtensionFolders;			//	Add these as extension folders.
 			TSortMap<DWORD, bool> TypesUsed;			//	List of types used (bind these, even if obsolete).
+			TSortMap<DWORD, bool> DisabledExtensions;	//	Collection Extensions disabled locally by user
 			DWORD dwMinAPIVersion = API_VERSION;		//	Min API version (for compatibility)
 
 			//	Options
@@ -265,7 +272,7 @@ class CUniverse
 		CSpaceObject *FindObject (DWORD dwID);
 		inline void FireOnGlobalIntroCommand (const CString &sCommand) { m_Design.FireOnGlobalIntroCommand(sCommand); }
 		inline void FireOnGlobalIntroStarted (void) { m_Design.FireOnGlobalIntroStarted(); }
-		inline void FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane) { m_Design.FireOnGlobalPaneInit(pScreen, pRoot, sScreen, sPane); }
+		inline void FireOnGlobalPaneInit (void *pScreen, CDesignType *pRoot, const CString &sScreen, const CString &sPane, ICCItem *pData) { m_Design.FireOnGlobalPaneInit(pScreen, pRoot, sScreen, sPane, pData); }
 		inline void FireOnGlobalPlayerBoughtItem (CSpaceObject *pSellerObj, const CItem &Item, const CCurrencyAndValue &Price) { m_Design.FireOnGlobalPlayerBoughtItem(pSellerObj, Item, Price); }
 		inline void FireOnGlobalPlayerChangedShips (CSpaceObject *pOldShip) { m_Design.FireOnGlobalPlayerChangedShips(pOldShip); }
 		inline void FireOnGlobalPlayerEnteredSystem (void) { m_Design.FireOnGlobalPlayerEnteredSystem(); }
@@ -287,6 +294,9 @@ class CUniverse
 		inline const CDisplayAttributeDefinitions &GetAttributeDesc (void) const { return m_Design.GetDisplayAttributes(); }
 		inline const CDebugOptions &GetDebugOptions (void) const { return m_DebugOptions; }
 		inline ICCItemPtr GetDebugProperty (const CString &sProperty) const { return m_DebugOptions.GetProperty(sProperty); }
+		inline const CEconomyType *GetDefaultCurrency (void) const { return (m_pAdventure ? m_pAdventure->GetDefaultCurrency() : CEconomyType::Default()); }
+		inline CDockSession &GetDockSession (void) { return m_DockSession; }
+		inline const CDockSession &GetDockSession (void) const { return m_DockSession; }
 		inline CGImageCache &GetDynamicImageLibrary (void) { return m_DynamicImageLibrary; }
 		inline CTimeSpan GetElapsedGameTime (void) { return m_Time.GetElapsedTimeAt(m_iTick); }
 		inline CTimeSpan GetElapsedGameTimeAt (int iTick) { return m_Time.GetElapsedTimeAt(iTick); }
@@ -300,10 +310,12 @@ class CUniverse
 		inline IHost *GetHost (void) const { return m_pHost; }
 		inline CMission *GetMission (int iIndex) { return m_AllMissions.GetMission(iIndex); }
 		inline int GetMissionCount (void) const { return m_AllMissions.GetCount(); }
+		inline CMissionList &GetMissions (void) { return m_AllMissions; }
 		void GetMissions (CSpaceObject *pSource, const CMission::SCriteria &Criteria, TArray<CMission *> *retList);
 		inline const CG16bitFont &GetNamedFont (ENamedFonts iFont) { return *m_FontTable[iFont]; }
 		inline const CObjectStats::SEntry &GetObjStats (DWORD dwObjID) const { return m_ObjStats.GetEntry(dwObjID); }
 		inline CObjectStats::SEntry &GetObjStatsActual (DWORD dwObjID) { return m_ObjStats.GetEntryActual(dwObjID); }
+		ICCItemPtr GetProperty (CCodeChainCtx &Ctx, const CString &sProperty);
 		void GetRandomLevelEncounter (int iLevel, CDesignType **retpType, IShipGenerator **retpTable, CSovereign **retpBaseSovereign);
 		inline CString GetResourceDb (void) { return m_sResourceDb; }
 		inline CCriticalSection &GetSem (void) { return m_cs; }
@@ -337,10 +349,9 @@ class CUniverse
 		inline bool SetDebugProperty (const CString &sProperty, ICCItem *pValue, CString *retsError = NULL) { return m_DebugOptions.SetProperty(sProperty, pValue, retsError); }
 		bool SetExtensionData (EStorageScopes iScope, DWORD dwExtension, const CString &sAttrib, const CString &sData);
 		void SetNewSystem (CSystem *pSystem, CSpaceObject *pPOV);
-		void SetPOV (CSpaceObject *pPOV);
+		bool SetPOV (CSpaceObject *pPOV);
 		void SetPlayerShip (CSpaceObject *pPlayer);
 		inline void SetRegistered (bool bRegistered = true) { m_bRegistered = bRegistered; }
-		inline void SetRegisteredExtensions (const CMultiverseCollection &Catalog, TArray<CMultiverseCatalogEntry *> *retNotFound) { m_Extensions.SetRegisteredExtensions(Catalog, retNotFound); }
 		inline void SetResurrectMode (bool bResurrect = true) { m_bResurrectMode = bResurrect; }
 		inline void SetSound (bool bSound = true) { m_bNoSound = !bSound; }
 		inline void SetSoundMgr (CSoundMgr *pSoundMgr) { m_pSoundMgr = pSoundMgr; }
@@ -355,7 +366,7 @@ class CUniverse
 		CEffectCreator *FindDefaultHitEffect (DamageTypes iDamage);
 		inline CDesignType *FindDesignType (DWORD dwUNID) { return m_Design.FindEntry(dwUNID); }
 		CDeviceClass *FindDeviceClass (DWORD dwUNID);
-		inline CEconomyType *FindEconomyType (const CString &sName) { return m_Design.FindEconomyType(sName); }
+		inline const CEconomyType *FindEconomyType (const CString &sName) { return m_Design.FindEconomyType(sName); }
 		inline CEffectCreator *FindEffectType (DWORD dwUNID) { return CEffectCreator::AsType(m_Design.FindEntry(dwUNID)); }
 		inline CShipTable *FindEncounterTable (DWORD dwUNID) { return CShipTable::AsType(m_Design.FindEntry(dwUNID)); }
 		bool FindExtension (DWORD dwUNID, DWORD dwRelease, CExtension **retpExtension = NULL) { return m_Extensions.FindBestExtension(dwUNID, dwRelease, (InDebugMode() ? CExtensionCollection::FLAG_DEBUG_MODE : 0), retpExtension); }
@@ -461,7 +472,6 @@ class CUniverse
 		ALERROR InitLevelEncounterTables (void);
 		ALERROR InitRequiredEncounters (CString *retsError);
 		ALERROR InitTopology (DWORD dwStartingMap, CString *retsError);
-		void NotifyMissionsOfNewSystem (CSystem *pSystem);
 		inline void SetCurrentAdventureDesc (CAdventureDesc *pAdventure) { m_pAdventure = pAdventure; }
 		void SetHost (IHost *pHost);
 		void SetPlayer (IPlayerController *pPlayer);
@@ -500,6 +510,8 @@ class CUniverse
 		CSystemEventList m_Events;				//	List of all global events
 		CObjectTracker m_Objects;				//	Objects across all systems
 		CObjectStats m_ObjStats;				//	Object stats (across all systems)
+
+		CDockSession m_DockSession;
 
 		//	Support structures
 

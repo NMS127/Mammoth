@@ -104,6 +104,8 @@ void CWeaponHUDCircular::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx
 //	Paint
 
 	{
+	DEBUG_TRY
+
 	if (m_bInvalid)
 		{
 		Realize(Ctx);
@@ -118,6 +120,8 @@ void CWeaponHUDCircular::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx
 			m_Buffer,
 			x,
 			y);
+
+	DEBUG_CATCH
 	}
 
 void CWeaponHUDCircular::PaintTarget (SHUDPaintCtx &Ctx, CShip *pShip, CSpaceObject *pTarget)
@@ -300,7 +304,7 @@ void CWeaponHUDCircular::PaintWeaponStatus (CShip *pShip, CInstalledDevice *pDev
 	//	Figure out what color to use
 
 	CG32bitPixel rgbColor;
-	if (pDevice->IsEnabled() && !pDevice->IsDamaged() && !pDevice->IsDisrupted())
+	if (pDevice->IsWorking())
 		rgbColor = m_rgbWeaponText;
 	else
 		rgbColor = DISABLED_LABEL_COLOR;

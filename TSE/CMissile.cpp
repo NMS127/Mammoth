@@ -496,7 +496,7 @@ CSpaceObject::Categories CMissile::GetCategory (void) const
 	{
 	//	We count as a beam if we're type="beam"
 
-	return (m_pDesc->GetFireType() == ftBeam ? catBeam : catMissile);
+	return (m_pDesc->GetFireType() == CWeaponFireDesc::ftBeam ? catBeam : catMissile);
 	}
 
 int CMissile::GetManeuverRate (void) const
@@ -764,30 +764,44 @@ void CMissile::OnMove (const CVector &vOldPos, Metric rSeconds)
 		return;
 		}
 
-	//	Compute threshold
+	//	Fragments and reflections don't hit test on the first move.
 
-	Metric rThreshold;
-	if (m_pDesc->ProximityBlast() && m_iTick >= m_pDesc->GetProximityFailsafe())
-		rThreshold = m_pDesc->GetFragmentationThreshold();
-	else
-		rThreshold = 0.0;
+	if (m_iTick <= 1 && (m_pDesc->IsFragment() || m_fReflection))
+		{ }
 
-	//	See if the missile hit anything after the move
+	//	If this is a fragmentation missile, then we need to compute proxity 
+	//	rather than just hit testing.
 
-	if (m_iTick > 1 || (!m_pDesc->IsFragment() && !m_fReflection))
-		m_pHit = HitTest(vOldPos, rThreshold, m_pDesc->GetDamage(), &m_vHitPos, &m_iHitDir);
-
-	//	Make sure we are not too close to the source when we trigger
-	//	a proximity blast.
-
-	CSpaceObject *pSource;
-	if (m_pHit && m_iHitDir == -1 && (pSource = m_Source.GetObj()))
+	else if (m_pDesc->ProximityBlast() && m_iTick >= m_pDesc->GetProximityFailsafe())
 		{
-		CVector vDist = m_vHitPos - pSource->GetPos();
-		Metric rDist2 = vDist.Length2();
+		//	Compute threshold
 
-		if (rDist2 < (rThreshold * rThreshold) / 4.0)
-			m_pHit = NULL;
+		Metric rMaxThreshold = m_pDesc->GetFragmentationMaxThreshold();
+		Metric rMinThreshold = m_pDesc->GetFragmentationMinThreshold();
+
+		//	Hit test
+
+		m_pHit = HitTestProximity(vOldPos, rMinThreshold, rMaxThreshold, m_pDesc->GetDamage(), &m_vHitPos, &m_iHitDir);
+
+		//	Make sure we are not too close to the source when we trigger
+		//	a proximity blast.
+
+		CSpaceObject *pSource;
+		if (m_pHit && m_iHitDir == -1 && (pSource = m_Source.GetObj()))
+			{
+			CVector vDist = m_vHitPos - pSource->GetPos();
+			Metric rDist2 = vDist.Length2();
+
+			if (rDist2 < (rMaxThreshold * rMaxThreshold) / 4.0)
+				m_pHit = NULL;
+			}
+		}
+
+	//	Otherwise, normal hit test
+
+	else
+		{
+		m_pHit = HitTest(vOldPos, m_pDesc->GetDamage(), &m_vHitPos, &m_iHitDir);
 		}
 
 	//	See if we pass through
@@ -857,7 +871,7 @@ void CMissile::OnPaint (CG32bitImage &Dest, int x, int y, SViewportPaintCtx &Ctx
 		//	LATER: We should incorporate this into the painter when we
 		//	load the CWeaponFireDesc.
 
-		if (m_pDesc->GetFireType() == ftBeam && m_pDesc->GetImage().IsLoaded())
+		if (m_pDesc->GetFireType() == CWeaponFireDesc::ftBeam && m_pDesc->GetImage().IsLoaded())
 			{
 			m_pDesc->GetImage().PaintImage(Dest,
 					x,

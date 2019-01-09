@@ -5,6 +5,8 @@
 
 #include "PreComp.h"
 
+//#define DEBUG_FILE_CORRUPTION
+
 #define CONTROLLER_AUTON					CONSTLIT("auton")
 #define CONTROLLER_CREW						CONSTLIT("crew")
 #define CONTROLLER_FERIAN					CONSTLIT("ferian")
@@ -13,6 +15,9 @@
 #define CONTROLLER_GAIAN_PROCESSOR			CONSTLIT("gaianprocessor")
 #define CONTROLLER_GLADIATOR				CONSTLIT("gladiator")
 #define CONTROLLER_ZOANTHROPE				CONSTLIT("zoanthrope")
+
+#define PROPERTY_API_VERSION				CONSTLIT("apiVersion")
+#define PROPERTY_MIN_API_VERSION			CONSTLIT("minAPIVersion")
 
 struct SExtensionSaveDesc
 	{
@@ -981,6 +986,23 @@ CSovereign *CUniverse::GetPlayerSovereign (void) const
 		return NULL;
 	}
 
+ICCItemPtr CUniverse::GetProperty (CCodeChainCtx &Ctx, const CString &sProperty)
+
+//	GetProperty
+//
+//	Returns a property
+
+	{
+	CCodeChain &CC = GetCC();
+
+	if (strEquals(sProperty, PROPERTY_API_VERSION))
+		return ICCItemPtr(CC.CreateInteger(API_VERSION));
+	else if (strEquals(sProperty, PROPERTY_MIN_API_VERSION))
+		return ICCItemPtr(CC.CreateInteger(m_Design.GetAPIVersion()));
+	else
+		return ICCItemPtr(CC.CreateNil());
+	}
+
 void CUniverse::GetRandomLevelEncounter (int iLevel, 
 										 CDesignType **retpType,
 										 IShipGenerator **retpTable, 
@@ -1179,7 +1201,7 @@ ALERROR CUniverse::Init (SInitDesc &Ctx, CString *retsError)
 
 		//	Load everything
 
-		if (error = m_Extensions.Load(sMainFilespec, dwFlags, retsError))
+		if (error = m_Extensions.Load(sMainFilespec, Ctx.DisabledExtensions, dwFlags, retsError))
 			return error;
 
 		//	Figure out the adventure to bind to.
@@ -1190,7 +1212,8 @@ ALERROR CUniverse::Init (SInitDesc &Ctx, CString *retsError)
 
 			DWORD dwFindFlags = dwFlags | CExtensionCollection::FLAG_ADVENTURE_ONLY;
 
-			if (!m_Extensions.FindBestExtension(Ctx.dwAdventure, 0, dwFindFlags, &Ctx.pAdventure))
+			if (!m_Extensions.FindBestExtension(Ctx.dwAdventure, 0, dwFindFlags, &Ctx.pAdventure)
+					|| m_Extensions.IsExtensionDisabledManually(Ctx.dwAdventure))
 				{
 				//	Try to recover, if necessary
 
@@ -1578,26 +1601,6 @@ ALERROR CUniverse::InitRequiredEncounters (CString *retsError)
 	return NOERROR;
 	}
 
-void CUniverse::NotifyMissionsOfNewSystem (CSystem *pSystem)
-
-//	NotifyMissionsOfNewSystem
-//
-//	We're showing a new system, so missions need to handle it.
-
-	{
-	int i;
-
-	//	Loop over all missions and update
-
-	for (i = 0; i < m_AllMissions.GetCount(); i++)
-		{
-		CMission *pMission = m_AllMissions.GetMission(i);
-
-		if (!pMission->IsDestroyed())
-			pMission->OnNewSystem(pSystem);
-		}
-	}
-
 void CUniverse::NotifyOnObjDestroyed (SDestroyCtx &Ctx)
 
 //	NotifyOnObjDestroyed
@@ -1901,7 +1904,12 @@ ALERROR CUniverse::LoadFromStream (IReadStream *pStream, DWORD *retdwSystemID, D
 
 		if (pExtension->IsDisabled())
 			{
-			*retsError = strPatternSubst(CONSTLIT("Unable to load extension %s (%08x): %s"), pExtension->GetName(), pExtension->GetUNID(), pExtension->GetDisabledReason());
+			*retsError = strPatternSubst(CONSTLIT("Unable to load %s (%08x): %s"), pExtension->GetName(), pExtension->GetUNID(), pExtension->GetDisabledReason());
+			return ERR_FAIL;
+			}
+		else if (m_Extensions.IsExtensionDisabledManually(pExtension->GetUNID()))
+			{
+			*retsError = strPatternSubst(CONSTLIT("Required extension %s (%08x) is disabled. Go to Mod Collection and enable it."), pExtension->GetName(), pExtension->GetUNID());
 			return ERR_FAIL;
 			}
 
@@ -1921,6 +1929,16 @@ ALERROR CUniverse::LoadFromStream (IReadStream *pStream, DWORD *retdwSystemID, D
 				&InitCtx.pAdventure))
 			{
 			*retsError = strPatternSubst(CONSTLIT("Unable to find adventure: %08x"), Desc.dwUNID);
+			return ERR_FAIL;
+			}
+		else if (InitCtx.pAdventure->IsDisabled())
+			{
+			*retsError = strPatternSubst(CONSTLIT("Unable to load %s (%08x): %s"), InitCtx.pAdventure->GetName(), InitCtx.pAdventure->GetUNID(), InitCtx.pAdventure->GetDisabledReason());
+			return ERR_FAIL;
+			}
+		else if (m_Extensions.IsExtensionDisabledManually(Desc.dwUNID))
+			{
+			*retsError = strPatternSubst(CONSTLIT("%s (%08x) is disabled. Go to Mod Collection and enable it."), InitCtx.pAdventure->GetName(), InitCtx.pAdventure->GetUNID());
 			return ERR_FAIL;
 			}
 		}
@@ -2053,8 +2071,32 @@ ALERROR CUniverse::LoadFromStream (IReadStream *pStream, DWORD *retdwSystemID, D
 			CDesignType *pType = FindDesignType(dwLoad);
 			if (pType == NULL)
 				{
-				*retsError = strPatternSubst(CONSTLIT("Unable to find type: %x (missing mod?)"), dwLoad);
-				return ERR_FAIL;
+				if (Ctx.dwSystemVersion < 168 && dwLoad == 0x9101d5)
+					{
+					i++;
+					if (i < (int)dwCount)
+						{
+						do
+							{
+							pStream->Read((char *)&dwLoad, sizeof(DWORD));
+							pType = FindDesignType(dwLoad);
+							}
+						while (pType == NULL);
+						}
+
+					if (pType == NULL)
+						{
+						*retsError = strPatternSubst(CONSTLIT("Unable to find type: %x (missing mod?)"), dwLoad);
+						return ERR_FAIL;
+						}
+
+					//	fall through
+					}
+				else
+					{
+					*retsError = strPatternSubst(CONSTLIT("Unable to find type: %x (missing mod?)"), dwLoad);
+					return ERR_FAIL;
+					}
 				}
 
 			try
@@ -2155,8 +2197,8 @@ void CUniverse::PaintObject (CG32bitImage &Dest, const RECT &rcView, CSpaceObjec
 //	Paints this object only
 
 	{
-	if (m_pPOV)
-		m_pPOV->GetSystem()->PaintViewportObject(Dest, rcView, m_pPOV, pObj);
+	if (m_pCurrentSystem && m_pPOV)
+		m_pCurrentSystem->PaintViewportObject(Dest, rcView, m_pPOV, pObj);
 	}
 
 void CUniverse::PaintObjectMap (CG32bitImage &Dest, const RECT &rcView, CSpaceObject *pObj)
@@ -2166,8 +2208,8 @@ void CUniverse::PaintObjectMap (CG32bitImage &Dest, const RECT &rcView, CSpaceOb
 //	Paints this object only
 
 	{
-	if (m_pPOV)
-		m_pPOV->GetSystem()->PaintViewportMapObject(Dest, rcView, m_pPOV, pObj);
+	if (m_pCurrentSystem && m_pPOV)
+		m_pCurrentSystem->PaintViewportMapObject(Dest, rcView, m_pPOV, pObj);
 	}
 
 void CUniverse::PaintPOV (CG32bitImage &Dest, const RECT &rcView, DWORD dwFlags)
@@ -2177,9 +2219,9 @@ void CUniverse::PaintPOV (CG32bitImage &Dest, const RECT &rcView, DWORD dwFlags)
 //	Paint the current point of view
 
 	{
-	if (m_pPOV)
+	if (m_pCurrentSystem && m_pPOV)
 		{
-		m_pPOV->GetSystem()->PaintViewport(Dest, rcView, m_pPOV, dwFlags, &m_ViewportAnnotations);
+		m_pCurrentSystem->PaintViewport(Dest, rcView, m_pPOV, dwFlags, &m_ViewportAnnotations);
 
 		//	Reset annotations until the next update
 
@@ -2196,8 +2238,8 @@ void CUniverse::PaintPOVLRS (CG32bitImage &Dest, const RECT &rcView, Metric rSca
 //	Paint the LRS from the current POV
 
 	{
-	if (m_pPOV)
-		m_pPOV->GetSystem()->PaintViewportLRS(Dest, rcView, m_pPOV, rScale, dwFlags, retbNewEnemies);
+	if (m_pCurrentSystem && m_pPOV)
+		m_pCurrentSystem->PaintViewportLRS(Dest, rcView, m_pPOV, rScale, dwFlags, retbNewEnemies);
 	}
 
 void CUniverse::PaintPOVMap (CG32bitImage &Dest, const RECT &rcView, Metric rMapScale)
@@ -2207,8 +2249,8 @@ void CUniverse::PaintPOVMap (CG32bitImage &Dest, const RECT &rcView, Metric rMap
 //	Paint the system map
 
 	{
-	if (m_pPOV)
-		m_pPOV->GetSystem()->PaintViewportMap(Dest, rcView, m_pPOV, rMapScale);
+	if (m_pCurrentSystem && m_pPOV)
+		m_pCurrentSystem->PaintViewportMap(Dest, rcView, m_pPOV, rMapScale);
 
 	m_iPaintTick++;
 	}
@@ -2259,8 +2301,6 @@ void CUniverse::PutPlayerInSystem (CShip *pPlayerShip, const CVector &vPos, CSys
 //	Player is placed in the current system.
 
 	{
-	int i;
-
 	ASSERT(m_pCurrentSystem);
 	ASSERT(pPlayerShip->GetSystem() == NULL);
 
@@ -2298,12 +2338,7 @@ void CUniverse::PutPlayerInSystem (CShip *pPlayerShip, const CVector &vPos, CSys
 
 	//	Tell all missions that the player has entered the system
 
-	for (i = 0; i < m_AllMissions.GetCount(); i++)
-		{
-		CMission *pMission = m_AllMissions.GetMission(i);
-		if (pMission->IsActive())
-			pMission->OnPlayerEnteredSystem(pPlayerShip);
-		}
+	m_AllMissions.NotifyOnPlayerEnteredSystem(pPlayerShip);
 	}
 
 void CUniverse::RefreshCurrentMission (void)
@@ -2578,6 +2613,9 @@ void CUniverse::SetCurrentSystem (CSystem *pSystem)
 //	Sets the current system
 
 	{
+	if (m_pCurrentSystem)
+		m_pCurrentSystem->FlushEnemyObjectCache();
+
 	CSystem *pOldSystem = m_pCurrentSystem;
 	m_pCurrentSystem = pSystem;
 
@@ -2597,7 +2635,7 @@ void CUniverse::SetCurrentSystem (CSystem *pSystem)
 	//	Initialize mission cache
 
 	if (pOldSystem != m_pCurrentSystem)
-		NotifyMissionsOfNewSystem(m_pCurrentSystem);
+		m_AllMissions.NotifyOnNewSystem(m_pCurrentSystem);
 	}
 
 bool CUniverse::SetExtensionData (EStorageScopes iScope, DWORD dwExtension, const CString &sAttrib, const CString &sData)
@@ -2709,7 +2747,7 @@ void CUniverse::SetPlayerShip (CSpaceObject *pPlayer)
 	CC.DefineGlobal(STR_G_PLAYER_SHIP, (m_pPlayerShip ? CC.CreateInteger((int)m_pPlayerShip) : CC.CreateNil()));
 	}
 
-void CUniverse::SetPOV (CSpaceObject *pPOV)
+bool CUniverse::SetPOV (CSpaceObject *pPOV)
 
 //	SetPOV
 //
@@ -2717,6 +2755,19 @@ void CUniverse::SetPOV (CSpaceObject *pPOV)
 //	and to determine what should be updated.
 
 	{
+	//	Only valid if POV is part of a system.
+
+	if (pPOV && (pPOV->GetSystem() == NULL || pPOV->IsDestroyed()))
+		{
+		//	We try to leave the universe in a valid state. I.e., we cannot leave
+		//	the old POV because it might have been destroyed.
+
+		SetPOV(NULL);
+		return false;
+		}
+
+	//	Remove old POV
+
 	if (m_pPOV)
 		{
 		CSpaceObject *pOldPOV = m_pPOV;
@@ -2730,6 +2781,8 @@ void CUniverse::SetPOV (CSpaceObject *pPOV)
 		SetCurrentSystem(m_pPOV->GetSystem());
 	else
 		SetCurrentSystem(NULL);
+
+	return true;
 	}
 
 void CUniverse::StartGame (bool bNewGame)
@@ -2820,10 +2873,14 @@ void CUniverse::Update (SSystemUpdateCtx &Ctx)
 //	Update the system of the current point of view
 
 	{
+	DEBUG_TRY
+
+	if (m_pCurrentSystem == NULL)
+		return;
+
 	//	Update system
 
-	if (m_pPOV)
-		m_pPOV->GetSystem()->Update(Ctx, &m_ViewportAnnotations);
+	m_pCurrentSystem->Update(Ctx, &m_ViewportAnnotations);
 
 	//	Fire timed events
 
@@ -2844,6 +2901,8 @@ void CUniverse::Update (SSystemUpdateCtx &Ctx)
 	//	Next
 
 	m_iTick++;
+
+	DEBUG_CATCH
 	}
 
 void CUniverse::UpdateExtended (void)
@@ -2854,6 +2913,8 @@ void CUniverse::UpdateExtended (void)
 //	away. We update the system to reflect the amount of time that has passed.
 
 	{
+	DEBUG_TRY
+
 	CSystem *pSystem = GetCurrentSystem();
 	ASSERT(pSystem);
 
@@ -2868,6 +2929,8 @@ void CUniverse::UpdateExtended (void)
 	//	Update the system 
 
 	pSystem->UpdateExtended(TotalTime);
+
+	DEBUG_CATCH
 	}
 
 void CUniverse::UpdateMissions (int iTick, CSystem *pSystem)
@@ -2877,6 +2940,8 @@ void CUniverse::UpdateMissions (int iTick, CSystem *pSystem)
 //	Update missions in the system.
 
 	{
+	DEBUG_TRY
+
 	int i;
 
 	SUpdateCtx Ctx;
@@ -2908,6 +2973,8 @@ void CUniverse::UpdateMissions (int iTick, CSystem *pSystem)
 				pMission->UpdateExpiration(iTick);
 			}
 		}
+
+	DEBUG_CATCH
 	}
 
 void CUniverse::UpdateSovereigns (int iTick, CSystem *pSystem)
@@ -2917,13 +2984,15 @@ void CUniverse::UpdateSovereigns (int iTick, CSystem *pSystem)
 //	Update each sovereign
 
 	{
-	int i;
+	DEBUG_TRY
 
-	for (i = 0; i < GetSovereignCount(); i++)
+	for (int i = 0; i < GetSovereignCount(); i++)
 		{
 		CSovereign *pSovereign = GetSovereign(i);
 		pSovereign->Update(iTick, pSystem);
 		}
+
+	DEBUG_CATCH
 	}
 
 CString CUniverse::ValidatePlayerName (const CString &sName)

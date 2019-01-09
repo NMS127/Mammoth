@@ -81,6 +81,9 @@
     <Filter Include="Source Files\Universe">
       <UniqueIdentifier>{3911c317-993f-4412-8f2d-ca00db69fe82}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Dock Screens">
+      <UniqueIdentifier>{2576b8d3-42d3-4cff-9251-31ce0058931f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PreComp.h">
@@ -293,6 +296,15 @@
     <ClInclude Include="..\Include\TSEObjectCriteria.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Include\TSETransLispUtil.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Include\TSEDesignDefs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Include\TSEDockScreenSession.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CAdventureRecord.cpp">
@@ -434,9 +446,6 @@
       <Filter>Source Files\DesignTypes</Filter>
     </ClCompile>
     <ClCompile Include="CDesignType.cpp">
-      <Filter>Source Files\DesignTypes</Filter>
-    </ClCompile>
-    <ClCompile Include="CDockScreenType.cpp">
       <Filter>Source Files\DesignTypes</Filter>
     </ClCompile>
     <ClCompile Include="CDynamicDesignTable.cpp">
@@ -1245,6 +1254,39 @@
     </ClCompile>
     <ClCompile Include="CMapLabelArranger.cpp">
       <Filter>Source Files\StarSystem</Filter>
+    </ClCompile>
+    <ClCompile Include="CSpaceObjectPool.cpp">
+      <Filter>Source Files\Utilities</Filter>
+    </ClCompile>
+    <ClCompile Include="CHullPointsCalculator.cpp">
+      <Filter>Source Files\Ships</Filter>
+    </ClCompile>
+    <ClCompile Include="CDockScreenType.cpp">
+      <Filter>Source Files\Dock Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="CDockScreenStack.cpp">
+      <Filter>Source Files\Dock Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="CDockSession.cpp">
+      <Filter>Source Files\Dock Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="CSpaceObjectItemList.cpp">
+      <Filter>Source Files\SpaceObjects</Filter>
+    </ClCompile>
+    <ClCompile Include="CPropertyCompare.cpp">
+      <Filter>Source Files\TransLISP</Filter>
+    </ClCompile>
+    <ClCompile Include="IShipController.cpp">
+      <Filter>Source Files\ShipAI</Filter>
+    </ClCompile>
+    <ClCompile Include="CSimpleOrder.cpp">
+      <Filter>Source Files\ShipAI</Filter>
+    </ClCompile>
+    <ClCompile Include="CArmorLimits.cpp">
+      <Filter>Source Files\Ships</Filter>
+    </ClCompile>
+    <ClCompile Include="CArmorMassDefinitions.cpp">
+      <Filter>Source Files\DesignTypes</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

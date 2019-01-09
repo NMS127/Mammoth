@@ -159,10 +159,16 @@ class CSystemCreateStats
 		struct SFillLocationsTable
 			{
 			int iLevel;
+			CString sNodeID;
 			CString sSystemName;
 			CSystemType *pSystemType;
+			CString sSystemAttribs;
 			CString sStationCriteria;
-			TProbabilityTable<CStationType *> Table;
+			TProbabilityMap<CStationType *> SystemProb;			//	Probability for each station, considering only system attribs
+			TProbabilityMap<CStationType *> FillProb;			//	Probability including stationCriteria in <FillLocations>
+			TProbabilityMap<CStationType *> LocationProb;		//	Probability including available locations
+
+			int iCount;
 			};
 
 		CSystemCreateStats (void);
@@ -204,7 +210,7 @@ class CSystemCreateStats
 		//	Encounter tables
 
 		TArray<SEncounterTable> m_EncounterTables;
-		TArray<SFillLocationsTable> m_FillLocationsTables;
+		TSortMap<CString, SFillLocationsTable> m_FillLocationsTables;
 	};
 
 class CSystemCreateEvents
@@ -359,23 +365,25 @@ class CLocationDef
 class CLocationList
 	{
 	public:
-		CLocationList (void);
-
 		void FillCloseLocations (void);
 		void FillOverlappingWith (CSpaceObject *pObj);
 		inline int GetCount (void) { return m_List.GetCount(); }
 		bool GetEmptyLocations (TArray<int> *retList);
 		inline CLocationDef *GetLocation (int iIndex) { return &m_List[iIndex]; }
+		const CLocationDef *GetLocationByObjID (DWORD dwObjID) const;
 		CLocationDef *Insert (const CString &sID = NULL_STR);
 		void ReadFromStream (SLoadCtx &Ctx);
 		inline void SetBlocked (int iIndex) { m_List[iIndex].SetBlocked(); }
-		inline void SetObjID (int iIndex, DWORD dwObjID) { m_List[iIndex].SetObjID(dwObjID); }
+		inline void SetObjID (int iIndex, DWORD dwObjID) { m_List[iIndex].SetObjID(dwObjID); InvalidateObjIndex(); }
 		void WriteToStream (IWriteStream *pStream);
 
 	private:
-		TArray<CLocationDef> m_List;
+		inline void InvalidateObjIndex (void) { m_ObjIndex.DeleteAll(); }
 
-		bool m_bMinDistCheck;				//	If TRUE, then we've checked all locations for min distance
+		TArray<CLocationDef> m_List;
+		mutable TSortMap<DWORD, int> m_ObjIndex;	//	Map from Obj ID to location definition//
+
+		bool m_bMinDistCheck = false;		//	If TRUE, then we've checked all locations for min distance
 	};
 
 class CTerritoryDef
@@ -650,6 +658,17 @@ class CSystem
 			VWP_MINING_DISPLAY =			0x00000004,	//	Show unexplored asteroids
 			};
 
+		struct SDebugInfo
+			{
+			int iTotalObjs = 0;					//	Total number of non-NULL CSpaceObjects
+			int iDestroyedObjs = 0;				//	->IsDestroyed() == true
+			int iDeletedObj = 0;				//	In m_DeletedObjects
+			int iBadObjs = 0;					//	Crash when trying to access object
+			int iStarObjs = 0;					//	Total stars
+
+			bool bBadStarCache = false;			//	m_Stars array is bad.
+			};
+
 		//	System methods
 
 		static ALERROR CreateEmpty (CUniverse *pUniv, CTopologyNode *pTopology, CSystem **retpSystem);
@@ -713,7 +732,7 @@ class CSystem
 		bool AddJoint (CObjectJoint::ETypes iType, CSpaceObject *pFrom, CSpaceObject *pTo, CObjectJoint **retpJoint = NULL);
 		bool AddJoint (CObjectJoint::ETypes iType, CSpaceObject *pFrom, CSpaceObject *pTo, ICCItem *pOptions, DWORD *retdwID = NULL);
 		ALERROR AddTimedEvent (CSystemEvent *pEvent);
-		inline void AddToDeleteList (CSpaceObject *pObj) { m_DeletedObjects.FastAdd(pObj); }
+		void AddToDeleteList (CSpaceObject *pObj);
 		ALERROR AddToSystem (CSpaceObject *pObj, int *retiIndex);
 		bool AscendObject (CSpaceObject *pObj, CString *retsError = NULL);
 		int CalculateLightIntensity (const CVector &vPos, CSpaceObject **retpStar = NULL, const CG8bitSparseImage **retpVolumetricMask = NULL);
@@ -746,18 +765,19 @@ class CSystem
 		void FireSystemWeaponEvents (CSpaceObject *pShot, CWeaponFireDesc *pDesc, const CDamageSource &Source, int iRepeatingCount, DWORD dwFlags);
 		void FlushEnemyObjectCache (void);
 		CString GetAttribsAtPos (const CVector &vPos);
-		inline CSpaceObject *GetDestroyedObject (int iIndex) { return m_DeletedObjects.GetObj(iIndex); }
-		inline int GetDestroyedObjectCount (void) { return m_DeletedObjects.GetCount(); }
+		void GetDebugInfo (SDebugInfo &Info) const;
 		inline CEnvironmentGrid *GetEnvironmentGrid (void) { InitSpaceEnvironment(); return m_pEnvironment; }
 		inline DWORD GetID (void) { return m_dwID; }
 		inline int GetLastUpdated (void) { return m_iLastUpdated; }
 		int GetLevel (void);
+		inline const CLocationList &GetLocations (void) const { return m_Locations; }
 		CSpaceObject *GetNamedObject (const CString &sName);
-		inline const CString &GetName (void) { return m_sName; }
+		inline const CString &GetName (void) const { return m_sName; }
 		CNavigationPath *GetNavPath (CSovereign *pSovereign, CSpaceObject *pStart, CSpaceObject *pEnd);
 		CNavigationPath *GetNavPathByID (DWORD dwID);
 		inline CSpaceObject *GetObject (int iIndex) const { return m_AllObjects[iIndex]; }
 		inline int GetObjectCount (void) const { return m_AllObjects.GetCount(); }
+		inline const CSpaceObjectGrid &GetObjectGrid (void) const { return m_ObjGrid; }
 		inline void GetObjectsInBox (const CVector &vPos, Metric rRange, CSpaceObjectList &Result)
 			{
 			CVector vRange = CVector(rRange, rRange);
@@ -789,6 +809,7 @@ class CSystem
 		void MarkImages (void);
 		void NameObject (const CString &sName, CSpaceObject *pObj);
 		CVector OnJumpPosAdj (CSpaceObject *pObj, const CVector &vPos);
+		void OnStationDestroyed (SDestroyCtx &Ctx);
 		void PaintViewport (CG32bitImage &Dest, const RECT &rcView, CSpaceObject *pCenter, DWORD dwFlags, SViewportAnnotations *pAnnotations = NULL);
 		void PaintViewportGrid (CMapViewportCtx &Ctx, CG32bitImage &Dest, Metric rGridSize);
 		void PaintViewportObject (CG32bitImage &Dest, const RECT &rcView, CSpaceObject *pCenter, CSpaceObject *pObj);
@@ -801,7 +822,6 @@ class CSystem
 		inline void RegisterForOnSystemCreated (CSpaceObject *pObj) { m_DeferredOnCreate.Insert(SDeferredOnCreateCtx(pObj)); }
 		void RegisterForOnSystemCreated (CSpaceObject *pObj, CStationType *pEncounter, const COrbit &Orbit);
 		void RemoveObject (SDestroyCtx &Ctx);
-		void RemoveTimersForObj (CSpaceObject *pObj);
 		void RestartTime (void);
 		ALERROR SaveToStream (IWriteStream *pStream);
 		inline void SetID (DWORD dwID) { m_dwID = dwID; }
@@ -819,6 +839,8 @@ class CSystem
 		void UnregisterEventHandler (CSpaceObject *pObj);
 		void Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnotations = NULL);
 		void UpdateExtended (const CTimeSpan &ExtraTime);
+		void ValidateExclusionRadius (void) const;
+		void ValidateExclusionRadius (CSpaceObject *pObj, const CStationEncounterDesc::SExclusionDesc &Exclusion) const;
 		void VectorToTile (const CVector &vPos, int *retx, int *rety) const;
 		void WriteObjRefToStream (CSpaceObject *pObj, IWriteStream *pStream, CSpaceObject *pReferrer = NULL);
 		void WriteSovereignRefToStream (CSovereign *pSovereign, IWriteStream *pStream);
@@ -870,7 +892,6 @@ class CSystem
 		CSystem (CUniverse *pUniv, CTopologyNode *pTopology);
 
 		void CalcAutoTarget (SUpdateCtx &Ctx);
-		void CalcObjGrid (SUpdateCtx &Ctx);
 		void CalcViewportCtx (SViewportPaintCtx &Ctx, const RECT &rcView, CSpaceObject *pCenter, DWORD dwFlags);
 		void CalcVolumetricMask (CSpaceObject *pStar, CG8bitSparseImage &VolumetricMask);
 		void ComputeRandomEncounters (void);

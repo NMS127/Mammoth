@@ -114,16 +114,7 @@ class CStationEncounterDesc
 			Metric rEnemyExclusionRadius2;
 			};
 
-		CStationEncounterDesc (void) :
-				m_bSystemCriteria(false),
-				m_rExclusionRadius(0.0),
-				m_rEnemyExclusionRadius(0.0),
-				m_bAutoLevelFrequency(false),
-				m_bNumberAppearing(false),
-				m_bMaxCountLimit(false),
-				m_iMaxCountInSystem(-1)
-			{ }
-
+		int CalcAffinity (CTopologyNode *pNode) const;
 		int CalcLevelFromFrequency (void) const;
 		bool InitAsOverride (const CStationEncounterDesc &Original, const CXMLElement &Override, CString *retsError);
 		ALERROR InitFromStationTypeXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc);
@@ -131,10 +122,13 @@ class CStationEncounterDesc
 		void InitLevelFrequency (void);
 		inline bool CanBeRandomlyEncountered (void) const { return (!m_sLevelFrequency.IsBlank() || m_bNumberAppearing); }
 		int GetCountOfRandomEncounterLevels (void) const;
+		inline const CTopologyNode::SAttributeCriteria &GetDistanceCriteria (void) const { return m_DistanceCriteria; }
 		void GetExclusionDesc (SExclusionDesc &Exclusion) const;
 		inline Metric GetExclusionRadius (void) const { return m_rExclusionRadius; }
 		inline Metric GetEnemyExclusionRadius (void) const { return m_rEnemyExclusionRadius; }
+		int GetFrequencyByDistance (int iDistance) const;
 		int GetFrequencyByLevel (int iLevel) const;
+		inline const CString &GetLevelFrequency (void) const { return m_sLevelFrequency; }
 		inline const CString &GetLocationCriteria (void) const { return m_sLocationCriteria; }
 		inline int GetMaxAppearing (void) const { return (m_bMaxCountLimit ? m_MaxAppearing.Roll() : -1); }
 		inline int GetNumberAppearing (void) const { return (m_bNumberAppearing ? m_NumberAppearing.Roll() : -1); }
@@ -155,22 +149,26 @@ class CStationEncounterDesc
 		void WriteToStream (IWriteStream *pStream);
 
 	private:
-		bool m_bSystemCriteria;				//	If TRUE we have system criteria
+		bool m_bSystemCriteria = false;				//	If TRUE we have system criteria
 		CTopologyNode::SCriteria m_SystemCriteria;	//	System criteria
 
-		CString m_sLevelFrequency;			//	String array of frequency distribution by level
-		CString m_sLocationCriteria;		//	Criteria for location
-		Metric m_rExclusionRadius;			//	No stations of any kind within this radius
-		Metric m_rEnemyExclusionRadius;		//	No enemy stations within this radius
-		bool m_bAutoLevelFrequency;			//	We generated m_sLevelFrequency and need to save it.
+		CTopologyNode::SAttributeCriteria m_DistanceCriteria;	//	Criteria for nodes for distance calc
+		CString m_sDistanceFrequency;				//	Frequency distribution by distance from criteria
+		CString m_sLevelFrequency;					//	String array of frequency distribution by level
+		CAttributeCriteria m_SystemAffinity;		//	Adjust frequency based on number of matches
 
-		bool m_bNumberAppearing;			//	If TRUE, must create this exact number in game
-		DiceRange m_NumberAppearing;		//	Create this number in the game
+		CString m_sLocationCriteria;				//	Criteria for location
+		Metric m_rExclusionRadius = 0.0;			//	No stations of any kind within this radius
+		Metric m_rEnemyExclusionRadius = 0.0;		//	No enemy stations within this radius
+		bool m_bAutoLevelFrequency = false;			//	We generated m_sLevelFrequency and need to save it.
 
-		bool m_bMaxCountLimit;				//	If FALSE, no limit
+		bool m_bNumberAppearing = false;			//	If TRUE, must create this exact number in game
+		DiceRange m_NumberAppearing;				//	Create this number in the game
+
+		bool m_bMaxCountLimit = false;				//	If FALSE, no limit
 		DiceRange m_MaxAppearing;
 
-		int m_iMaxCountInSystem;			//	-1 means no limit
+		int m_iMaxCountInSystem = -1;				//	-1 means no limit
 	};
 
 class CStationEncounterCtx
@@ -211,6 +209,8 @@ class CStationEncounterCtx
 
 		int GetBaseFrequencyForNode (CTopologyNode *pNode, CStationType *pStation, const CStationEncounterDesc &Desc);
 		int GetCountInSystem (CSystem *pSystem, CStationType *pStationType) const;
+
+		static int CalcDistanceToCriteria (CTopologyNode *pNode, const CTopologyNode::SAttributeCriteria &Criteria);
 
 		SEncounterStats m_Total;			//	Encounters in entire game
 		TSortMap<int, SEncounterStats> m_ByLevel;	//	Encounters by system level
@@ -312,7 +312,7 @@ class CStationType : public CDesignType
 		Metric GetLevelStrength (int iLevel);
 		inline const CString &GetLocationCriteria (void) const { return GetEncounterDesc().GetLocationCriteria(); }
 		inline Metric GetMass (void) { return m_rMass; }
-		inline Metric GetMaxEffectiveRange (void) { return m_rMaxAttackDistance; }
+		inline Metric GetMaxEffectiveRange (void) { if (m_fCalcMaxAttackDist) CalcMaxAttackDistance(); return m_rMaxAttackDistance; }
 		inline int GetMaxLightDistance (void) { return m_iMaxLightDistance; }
 		inline int GetMaxShipConstruction (void) { return m_iMaxConstruction; }
 		inline const CNameDesc &GetNameDesc (void) const { return m_Name; }
@@ -413,6 +413,7 @@ class CStationType : public CDesignType
 		Metric CalcBalance (void) const;
 		Metric CalcDefenderStrength (int iLevel) const;
 		int CalcHitsToDestroy (int iLevel) const;
+		Metric CalcMaxAttackDistance (void);
 		Metric CalcTreasureValue (int iLevel) const;
 		Metric CalcWeaponStrength (int iLevel) const;
 		void InitStationDamage (void);
@@ -478,7 +479,7 @@ class CStationType : public CDesignType
 		DWORD m_fCalcLevel:1;							//	If TRUE, m_iLevel needs to be computed
 		DWORD m_fBalanceValid:1;						//	If TRUE, m_rCombatBalance is valid
 		DWORD m_fShowsUnexploredAnnotation:1;			//	If TRUE, we show unexplored annotation (used for asteroids)
-		DWORD m_fSpare5:1;
+		DWORD m_fCalcMaxAttackDist:1;					//	If TRUE, we need to compute m_rMaxAttackDistance
 		DWORD m_fSpare6:1;
 		DWORD m_fSpare7:1;
 		DWORD m_fSpare8:1;

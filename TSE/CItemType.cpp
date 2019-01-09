@@ -125,7 +125,6 @@
 #define SPECIAL_HAS_COMPONENTS					CONSTLIT("hasComponents:")
 #define SPECIAL_IS_LAUNCHER						CONSTLIT("isLauncher:")
 #define SPECIAL_LAUNCHED_BY						CONSTLIT("launchedBy:")
-#define SPECIAL_PROPERTY						CONSTLIT("property:")
 #define SPECIAL_UNKNOWN_TYPE					CONSTLIT("unknownType:")
 
 #define SPECIAL_TRUE							CONSTLIT("true")
@@ -909,12 +908,17 @@ CString CItemType::GetNamePattern (DWORD dwNounFormFlags, DWORD *retdwFlags) con
 	{
 	bool bActualName = (dwNounFormFlags & nounActual) != 0;
 
-	if (!IsKnown() && !bActualName && !m_sUnknownName.IsBlank())
+	if (!IsKnown() && !bActualName && m_pUnknownType)
 		{
-		if (retdwFlags)
-			*retdwFlags = 0;
+		if (!m_sUnknownName.IsBlank())
+			{
+			if (retdwFlags)
+				*retdwFlags = 0;
 
-		return m_sUnknownName;
+			return m_sUnknownName;
+			}
+		else
+			return m_pUnknownType->GetNamePattern(dwNounFormFlags, retdwFlags);
 		}
 
 	if (retdwFlags)
@@ -1561,7 +1565,7 @@ ALERROR CItemType::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 
 		else if (strEquals(pSubDesc->GetTag(), COCKPIT_USE_TAG))
 			{
-			m_pUseCode = g_pUniverse->GetCC().Link(pSubDesc->GetContentText(0), 0, NULL);
+			m_pUseCode = g_pUniverse->GetCC().Link(pSubDesc->GetContentText(0));
 
 			//	These are also set in the main desc; we only override if we find them here
 
@@ -1617,8 +1621,16 @@ ALERROR CItemType::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc)
 			}
 		else if (strEquals(pSubDesc->GetTag(), SHIELD_CLASS_TAG))
 			{
-			if (error = CShieldClass::CreateFromXML(Ctx, pSubDesc, this, &m_pDevice))
+			CShieldClass::SInitCtx InitCtx;
+			InitCtx.pType = this;
+
+			if (error = CShieldClass::CreateFromXML(Ctx, InitCtx, pSubDesc, &m_pDevice))
 				return ComposeLoadError(Ctx, strPatternSubst(CONSTLIT("Unable to load %s: %s"), pSubDesc->GetTag(), Ctx.sError));
+
+			//	For backwards compatibility, CShieldClass can set our max charges.
+
+			if (InitCtx.iMaxCharges != -1)
+				m_iMaxCharges = InitCtx.iMaxCharges;
 			}
 		else if (strEquals(pSubDesc->GetTag(), DRIVE_CLASS_TAG))
 			{
@@ -1833,17 +1845,6 @@ bool CItemType::OnHasSpecialAttribute (const CString &sAttrib) const
 			return false;
 
 		return (pDevice->GetAmmoVariant(this) != -1);
-		}
-	else if (strStartsWith(sAttrib, SPECIAL_PROPERTY))
-		{
-		CString sProperty = strSubString(sAttrib, SPECIAL_PROPERTY.GetLength());
-		CItem Item((CItemType *)this, 1);
-
-		ICCItem *pValue = Item.GetItemProperty(CCodeChainCtx(), CItemCtx(Item), sProperty);
-		bool bResult = !pValue->IsNil();
-		pValue->Discard(&g_pUniverse->GetCC());
-
-		return bResult;
 		}
 	else if (strStartsWith(sAttrib, SPECIAL_UNKNOWN_TYPE))
 		{

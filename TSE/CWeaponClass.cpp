@@ -37,6 +37,7 @@
 #define POWER_USE_ATTRIB						CONSTLIT("powerUse")
 #define RECOIL_ATTRIB							CONSTLIT("recoil")
 #define REPORT_AMMO_ATTRIB						CONSTLIT("reportAmmo")
+#define SHIP_COUNTER_PER_SHOT_ATTRIB			CONSTLIT("shipCounterPerShot")
 #define TARGET_STATIONS_ONLY_ATTRIB				CONSTLIT("targetStationsOnly")
 #define TYPE_ATTRIB								CONSTLIT("type")
 
@@ -96,6 +97,7 @@
 #define PROPERTY_OMNIDIRECTIONAL				CONSTLIT("omnidirectional")
 #define PROPERTY_REPEATING						CONSTLIT("repeating")
 #define PROPERTY_SECONDARY						CONSTLIT("secondary")
+#define PROPERTY_SHIP_COUNTER_PER_SHOT			CONSTLIT("shipCounterPerShot")
 #define PROPERTY_STD_COST						CONSTLIT("stdCost")
 #define PROPERTY_TRACKING						CONSTLIT("tracking")
 
@@ -337,7 +339,7 @@ int CWeaponClass::CalcActivateDelay (CItemCtx &ItemCtx) const
 	if (pEnhancements)
 		return pEnhancements->CalcActivateDelay(ItemCtx);
 
-	return GetActivateDelay(ItemCtx.GetDevice(), ItemCtx.GetSource());
+	return GetActivateDelay(ItemCtx);
 	}
 
 int CWeaponClass::CalcBalance (CItemCtx &ItemCtx, SBalance &retBalance) const
@@ -943,8 +945,8 @@ Metric CWeaponClass::CalcDamage (CWeaponFireDesc *pShot, const CItemEnhancementS
 			Metric rHitFraction;
 			switch (pFragment->pDesc->GetType())
 				{
-				case ftArea:
-				case ftRadius:
+				case CWeaponFireDesc::ftArea:
+				case CWeaponFireDesc::ftRadius:
 					rHitFraction = 1.0;
 					break;
 
@@ -981,12 +983,12 @@ Metric CWeaponClass::CalcDamage (CWeaponFireDesc *pShot, const CItemEnhancementS
 
 		switch (pShot->GetType())
 			{
-			case ftArea:
+			case CWeaponFireDesc::ftArea:
 				//	Assume 1/8th damage points hit on average
 				rDamage = EXPECTED_SHOCKWAVE_HITS * pShot->GetAreaDamageDensityAverage() * pShot->GetDamage().GetDamageValue(dwDamageFlags);
 				break;
 
-			case ftRadius:
+			case CWeaponFireDesc::ftRadius:
 				//	Assume average target is far enough away to take half damage
 				rDamage = EXPECTED_RADIUS_DAMAGE * pShot->GetDamage().GetDamageValue(dwDamageFlags);
 				break;
@@ -1079,13 +1081,16 @@ int CWeaponClass::CalcFireAngle (CItemCtx &ItemCtx, Metric rSpeed, CSpaceObject 
 	int iMinFireArc, iMaxFireArc;
 	DeviceRotationTypes iType = GetRotationType(ItemCtx, &iMinFireArc, &iMaxFireArc);
 
-	//	If we don't have a target, or if we're firing straight, then we fire 
-	//	straight.
+	//	If we're firing straight, then we just fire straight
 
-	if (pTarget == NULL || iType == rotNone)
-		{
+	if (iType == rotNone)
 		return AngleMod(pSource->GetRotation() + iMinFireArc);
-		}
+
+	//	If we don't have a target, then we fire straight also, but we need to 
+	//	compute that based on the fire arc.
+
+	else if (pTarget == NULL)
+		return AngleMod(pSource->GetRotation() + AngleMiddle(iMinFireArc, iMaxFireArc));
 
 	//	Otherwise, we need to compute a firing solution.
 
@@ -1205,17 +1210,12 @@ int CWeaponClass::CalcPowerUsed (SUpdateCtx &UpdateCtx, CInstalledDevice *pDevic
 
 	//	We consume less power when we are fully charged
 
-	int iPower = m_iPowerUse;
+	int iIdlePower;
+	int iPower = GetPowerRating(Ctx, &iIdlePower);
 	if (pDevice->IsReady() && (!pDevice->IsTriggered() || !pDevice->IsLastActivateSuccessful()))
-		iPower = m_iIdlePowerUse;
-
-	//	Adjust based on power efficiency enhancement
-
-	TSharedPtr<CItemEnhancementStack> pEnhancements = Ctx.GetEnhancementStack();
-	if (pEnhancements)
-		iPower = iPower * pEnhancements->GetPowerAdj() / 100;
-
-	return iPower;
+		return iIdlePower;
+	else
+		return iPower;
 	}
 
 bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int iRepeatingCount, bool *retbConsumed)
@@ -1243,61 +1243,37 @@ bool CWeaponClass::ConsumeAmmo (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, int i
 	if (pDevice == NULL)
 		return false;
 
+	//	If this is a repeating weapon then we only consume ammo on the first
+	//	shot (unless otherwise specified).
+
+	if (iRepeatingCount > 0 && !m_bContinuousConsumePerShot)
+		return true;
+
+	//	Figure out how much ammo we consume per shot.
+
 	int iAmmoConsumed = FireGetAmmoToConsume(ItemCtx, pShot, iRepeatingCount);
-
-	//	For repeating weapons, we check at the beginning and consume at the end.
-	
-	if (pShot->GetContinuous() > 0)
-		{
-		if ((iRepeatingCount == 0) || m_bContinuousConsumePerShot)
-			{
-			//	If ammo items...
-
-			if (pShot->GetAmmoType())
-				{
-				CItemListManipulator ItemList(pSource->GetItemList());
-				CItem Item(pShot->GetAmmoType(), iAmmoConsumed);
-				if (!ItemList.SetCursorAtItem(Item, CItem::FLAG_IGNORE_CHARGES))
-					return false;
-				if (ItemList.GetItemAtCursor().GetCount() < iAmmoConsumed)
-					return false;
-				}
-
-			//	If charges...
-
-			else if (m_bCharges)
-				{
-				if (pDevice->GetCharges(pSource) < iAmmoConsumed)
-					return false;
-				}
-
-			//	We don't consume yet (unless m_bContinuousConsumePerShot is true)
-			
-			if (!m_bContinuousConsumePerShot)
-				return true;
-			}
-		else if ((iRepeatingCount != pShot->GetContinuous()) && !m_bContinuousConsumePerShot)
-			{
-			//	We don't consume until the last shot, unless m_bContinuousConsumePerShot is true.
-
-			return true;
-			}
-
-		//	Fall through and consume ammo
-		}
 
 	//	Check based on the type of ammo
 
 	bool bNextVariant = false;
 	if (pShot->GetAmmoType())
 		{
+		CItemListManipulator ItemList(pSource->GetItemList());
+		CItem Item(pShot->GetAmmoType(), iAmmoConsumed);
+
+		//	We look for the ammo item. If we're using magazines, then look for
+		//	the item with the least charges (use those up first).
+
+		DWORD dwFlags = CItem::FLAG_IGNORE_CHARGES;
+		if (pShot->GetAmmoType()->AreChargesAmmo())
+			dwFlags |= CItem::FLAG_FIND_MIN_CHARGES;
+
 		//	Select the ammo. If we could not select it, then it means that we
 		//	have none, so we fail.
 
-		CItemListManipulator ItemList(pSource->GetItemList());
-		CItem Item(pShot->GetAmmoType(), iAmmoConsumed);
-		if (!ItemList.SetCursorAtItem(Item, CItem::FLAG_IGNORE_CHARGES))
+		if (!ItemList.SetCursorAtItem(Item, dwFlags))
 			return false;
+
 		if (ItemList.GetItemAtCursor().GetCount() < iAmmoConsumed)
 			return false;
 
@@ -1438,6 +1414,7 @@ ALERROR CWeaponClass::CreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CI
 	pWeapon->m_bReportAmmo = pDesc->GetAttributeBool(REPORT_AMMO_ATTRIB);
 	pWeapon->m_bTargetStationsOnly = pDesc->GetAttributeBool(TARGET_STATIONS_ONLY_ATTRIB);
 	pWeapon->m_bContinuousConsumePerShot = pDesc->GetAttributeBool(CONTINUOUS_CONSUME_PERSHOT_ATTRIB);
+	pWeapon->m_iCounterPerShot = pDesc->GetAttributeIntegerBounded(SHIP_COUNTER_PER_SHOT_ATTRIB, 0, -1, 0);
 
 
 	//	Configuration
@@ -1877,12 +1854,6 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 
 	CFailureDesc::EFailureTypes iFailureMode = CFailureDesc::failNone;
 
-	//	See if we have enough ammo/charges to proceed. If we don't then we 
-	//	cannot continue.
-
-	if (!ConsumeAmmo(ItemCtx, pShot, iRepeatingCount, retbConsumedItems))
-		return false;
-
 	//	Update capacitor counters
 
 	if (m_Counter == cntCapacitor)
@@ -1900,6 +1871,20 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 			//	outcome.
 			return true;
 		}
+
+	//  Update the ship energy/heat counter.
+
+	if (m_iCounterPerShot != 0)
+		{
+		if (!UpdateShipCounter(ItemCtx, pShot))
+			return false;
+		}
+	
+	//	See if we have enough ammo/charges to proceed. If we don't then we 
+	//	cannot continue.
+
+	if (!ConsumeAmmo(ItemCtx, pShot, iRepeatingCount, retbConsumedItems))
+		return false;
 
 	//	If we're damaged, disabled, or badly designed, we have a chance of 
 	//	failure.
@@ -2043,7 +2028,7 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 	CVector vRecoil;
 	bool bNoShotsFired = true;
 
-	if (pShot->GetFireType() == ftContinuousBeam && !pDevice->HasLastShots())
+	if (pShot->GetFireType() == CWeaponFireDesc::ftContinuousBeam && !pDevice->HasLastShots())
 		pDevice->SetLastShotCount(iShotCount);
 
 	for (i = 0; i < iShotCount; i++)
@@ -2087,7 +2072,7 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 
 			//	If this is a continuous beam, then we need special code.
 
-			if (pShot->GetFireType() == ftContinuousBeam
+			if (pShot->GetFireType() == CWeaponFireDesc::ftContinuousBeam
 					&& (pNewObj = pDevice->GetLastShot(pSource, i))
 					&& (pShot->IsCurvedBeam() || pNewObj->GetRotation() == ShotDir[i]))
 				{
@@ -2120,7 +2105,7 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 
 				//	Remember the shot, if necessary
 
-				if (pShot->GetFireType() == ftContinuousBeam)
+				if (pShot->GetFireType() == CWeaponFireDesc::ftContinuousBeam)
 					pDevice->SetLastShot(pNewObj, i);
 				}
 
@@ -2161,7 +2146,7 @@ bool CWeaponClass::FireWeapon (CInstalledDevice *pDevice,
 	return true;
 	}
 
-int CWeaponClass::GetActivateDelay (CInstalledDevice *pDevice, CSpaceObject *pSource) const
+int CWeaponClass::GetActivateDelay (CItemCtx &ItemCtx) const
 
 //	GetActivateDelay
 //
@@ -2169,7 +2154,7 @@ int CWeaponClass::GetActivateDelay (CInstalledDevice *pDevice, CSpaceObject *pSo
 //	NOTE: We do not adjust for enhancements.
 
 	{
-	return GetFireDelay(GetWeaponFireDesc(CItemCtx(pSource, pDevice)));
+	return GetFireDelay(GetWeaponFireDesc(ItemCtx));
 	}
 
 CItemType *CWeaponClass::GetAmmoItem (int iIndex) const
@@ -2478,6 +2463,10 @@ ICCItem *CWeaponClass::FindAmmoItemProperty (CItemCtx &Ctx, const CItem &Ammo, c
 		CWeaponFireDesc *pShot = GetWeaponFireDesc(Ctx);
 		return CC.CreateInteger(pShot->GetContinuous());
 		}
+	else if (strEquals(sProperty, PROPERTY_SHIP_COUNTER_PER_SHOT))
+		{
+		return CC.CreateInteger(m_iCounterPerShot);
+		}
     else if (strEquals(sProperty, PROPERTY_STD_COST))
         {
         const SStdStats &Stats = STD_WEAPON_STATS[CalcLevel(pShot) - 1];
@@ -2726,7 +2715,7 @@ DWORD CWeaponClass::GetLinkedFireOptions (CItemCtx &Ctx)
 	return m_dwLinkedFireOptions; 
 	}
 
-int CWeaponClass::GetPowerRating (CItemCtx &Ctx) const
+int CWeaponClass::GetPowerRating (CItemCtx &Ctx, int *retiIdlePowerUse) const
 
 //	GetPowerRating
 //
@@ -2734,10 +2723,32 @@ int CWeaponClass::GetPowerRating (CItemCtx &Ctx) const
 
 	{
 	int iPower = m_iPowerUse;
+	int iIdlePower = m_iIdlePowerUse;
+
+	//	If the weapon fire descriptor overrides power use, then use that.
+
+	CWeaponFireDesc *pShot = GetWeaponFireDesc(Ctx);
+	if (pShot)
+		{
+		if (pShot->GetPowerUse() != -1)
+			iPower = pShot->GetPowerUse();
+
+		if (pShot->GetIdlePowerUse() != -1)
+			iIdlePower = pShot->GetIdlePowerUse();
+		}
+
+	//	Adjust if we have an enhancement.
 
 	TSharedPtr<CItemEnhancementStack> pEnhancements = Ctx.GetEnhancementStack();
 	if (pEnhancements)
-		iPower = iPower * pEnhancements->GetPowerAdj() / 100;
+		{
+		int iAdj = pEnhancements->GetPowerAdj();
+		iPower = iPower * iAdj / 100;
+		iIdlePower = iIdlePower * iAdj / 100;
+		}
+
+	if (retiIdlePowerUse)
+		*retiIdlePowerUse = iIdlePower;
 
 	return iPower;
 	}
@@ -2747,18 +2758,7 @@ CString GetReferenceFireRate (int iFireRate)
 	if (iFireRate <= 0)
 		return NULL_STR;
 
-	int iRate = (int)((10.0 * g_TicksPerSecond / iFireRate) + 0.5);
-	if (iRate == 0)
-		return CONSTLIT(" @ <0.1 shots/sec");
-	else if ((iRate % 10) == 0)
-		{
-		if ((iRate / 10) == 1)
-			return strPatternSubst(CONSTLIT(" @ %d shot/sec"), iRate / 10);
-		else
-			return strPatternSubst(CONSTLIT(" @ %d shots/sec"), iRate / 10);
-		}
-	else
-		return strPatternSubst(CONSTLIT(" @ %d.%d shots/sec"), iRate / 10, iRate % 10);
+	return strPatternSubst(CONSTLIT(" @ %s"), CLanguage::ComposeNumber(CLanguage::numberFireRate, iFireRate));
 	}
 
 bool CWeaponClass::GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, DamageTypes *retiDamage, CString *retsReference) const
@@ -2806,7 +2806,7 @@ bool CWeaponClass::GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, Dam
 
 		//	For shockwaves...
 
-		if (pShot->GetType() == ftArea)
+		if (pShot->GetType() == CWeaponFireDesc::ftArea)
 			{
 			//	Compute total damage. NOTE: For particle weapons the damage 
 			//	specified is the total damage if ALL particle were to hit.
@@ -2831,7 +2831,7 @@ bool CWeaponClass::GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, Dam
 
 		//	For area weapons...
 
-		else if (pShot->GetType() == ftRadius)
+		else if (pShot->GetType() == CWeaponFireDesc::ftRadius)
 			{
 			CString sDamage = Damage.GetDesc(DamageDesc::flagAverageDamage);
 
@@ -2846,7 +2846,7 @@ bool CWeaponClass::GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, Dam
 
 		//	For particles...
 
-		else if (pShot->GetType() == ftParticles)
+		else if (pShot->GetType() == CWeaponFireDesc::ftParticles)
 			{
 			//	Some weapons fire multiple shots (e.g., Avalanche cannon)
 
@@ -2949,13 +2949,13 @@ CWeaponFireDesc *CWeaponClass::GetReferenceShotData (CWeaponFireDesc *pShot, int
 			{
 			//	Area damage counts as multiple hits
 
-			case ftArea:
+			case CWeaponFireDesc::ftArea:
 				iFragments = (int)(iFragments * SHOCKWAVE_DAMAGE_FACTOR);
 				break;
 
 			//	Radius damage always hits (if in range)
 
-			case ftRadius:
+			case CWeaponFireDesc::ftRadius:
 				break;
 
 			//	For others, only some of the fragments will hit
@@ -3354,16 +3354,17 @@ int CWeaponClass::GetWeaponEffectiveness (CSpaceObject *pSource, CInstalledDevic
 			break;
 		}
 
-	//	If the weapon has EMP damage and the target is not paralysed then
+	//	If the weapon has EMP damage and the target has no shields and is not paralysed then
 	//	this is very effective.
 
-	if (pTarget && pShot->GetDamage().GetEMPDamage() > 0)
+	if (pTarget && pTarget->GetShieldLevel() <= 0 && pShot->GetDamage().GetEMPDamage() > 0)
 		{
-		//	If the target is already ionized, or if the target is a station
-		//	(which cannot be paralyzed) then don't use this weapon.
+		//	If the target is already paralyzed, or if the target is immune
+		//	or is a station (which cannot be paralyzed) then don't use this weapon.
 
 		if (pTarget->IsParalyzed() 
-				|| pTarget->GetCategory() != CSpaceObject::catShip)
+				|| pTarget->GetCategory() != CSpaceObject::catShip
+				|| pTarget->IsImmuneTo(CConditionSet::cndParalyzed))
 			return -100;
 
 		iScore += 100;
@@ -3372,13 +3373,14 @@ int CWeaponClass::GetWeaponEffectiveness (CSpaceObject *pSource, CInstalledDevic
 	//	If the weapon has blinding damage and the target is not blind then
 	//	this is very effective
 
-	if (pTarget && pShot->GetDamage().GetBlindingDamage() > 0)
+	if (pTarget && pTarget->GetShieldLevel() <= 0 && pShot->GetDamage().GetBlindingDamage() > 0)
 		{
-		//	If the target is already blind, or if the target is a station, then
-		//	don't bother with this weapon.
+		//	If the target is already blind, or if the target is immune or is
+		//	a station, then don't bother with this weapon.
 
 		if (pTarget->IsBlind()
-				|| pTarget->GetCategory() != CSpaceObject::catShip)
+				|| pTarget->GetCategory() != CSpaceObject::catShip
+				|| pTarget->IsImmuneTo(CConditionSet::cndBlind))
 			return -100;
 
 		iScore += 100;
@@ -3632,7 +3634,7 @@ ALERROR CWeaponClass::InitVariantsFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDe
 
         if (pType->IsScalable())
             {
-            if (error = m_ShotData[0].pDesc->InitScaledStats(Ctx, pDesc, pType))
+            if (error = m_ShotData[0].pDesc->InitScaledStats(Ctx, pDesc, pType, this))
                 return error;
             }
 		}
@@ -3664,10 +3666,10 @@ bool CWeaponClass::IsAreaWeapon (CSpaceObject *pSource, CInstalledDevice *pDevic
 	if (pShot == NULL)
 		return false;
 
-	if (pShot->GetType() == ftArea)
+	if (pShot->GetType() == CWeaponFireDesc::ftArea)
 		return true;
 
-	if (pShot->HasFragments() && pShot->GetFirstFragment()->pDesc->GetType() == ftArea)
+	if (pShot->HasFragments() && pShot->GetFirstFragment()->pDesc->GetType() == CWeaponFireDesc::ftArea)
 		return true;
 
 	return false;
@@ -3788,7 +3790,7 @@ bool CWeaponClass::IsWeaponAligned (CSpaceObject *pShip,
 
 	//	Area weapons are always aligned
 
-	if (pShot->GetType() == ftArea)
+	if (pShot->GetType() == CWeaponFireDesc::ftArea)
 		{
 		if (retiFireAngle)
 			*retiFireAngle = iFacingAngle;
@@ -4001,20 +4003,20 @@ void CWeaponClass::OnAccumulateAttributes (CItemCtx &ItemCtx, const CItem &Ammo,
 
 		//	Special damage delivery
 
-		if (pShot->GetType() == ftArea)
+		if (pShot->GetType() == CWeaponFireDesc::ftArea)
 			retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("shockwave")));
 
-		else if (pShot->GetType() == ftRadius)
+		else if (pShot->GetType() == CWeaponFireDesc::ftRadius)
 			retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("radius")));
 
 		//	For continuous beam
 
-		else if (pShot->GetType() == ftContinuousBeam)
+		else if (pShot->GetType() == CWeaponFireDesc::ftContinuousBeam)
 			retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("beam")));
 
 		//	For particles...
 
-		else if (pShot->GetType() == ftParticles)
+		else if (pShot->GetType() == CWeaponFireDesc::ftParticles)
 			retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("cloud")));
 
 		//	For large number of fragments, we have a special description
@@ -4027,7 +4029,7 @@ void CWeaponClass::OnAccumulateAttributes (CItemCtx &ItemCtx, const CItem &Ammo,
 		//	(We ignore passthrough for shockwaves, since that's already a 
 		//	property of them.)
 
-		if (pShot->GetPassthrough() >= 20 && pShot->GetType() != ftArea)
+		if (pShot->GetPassthrough() >= 20 && pShot->GetType() != CWeaponFireDesc::ftArea)
 			retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("passthrough")));
 
 		//	Stealth
@@ -4247,7 +4249,7 @@ CString CWeaponClass::OnGetReference (CItemCtx &Ctx, const CItem &Ammo, DWORD dw
 				&& GetAmmoItemCount() == 1
 				&& (pAmmo = GetAmmoItem(0)))
 			{
-			AppendReferenceString(&sReference, strPatternSubst(CONSTLIT("Requires %s"), pAmmo->GetNounPhrase(0x02)));
+			AppendReferenceString(&sReference, strPatternSubst(CONSTLIT("requires %s"), pAmmo->GetNounPhrase(0x02)));
 			}
 		}
 
@@ -4486,6 +4488,45 @@ void CWeaponClass::Update (CInstalledDevice *pDevice, CSpaceObject *pSource, SDe
 
 	DEBUG_CATCH
 	}
+
+bool CWeaponClass::UpdateShipCounter(CItemCtx &ItemCtx, CWeaponFireDesc *pShot)
+
+//	UpdateShipCounter
+//
+//	If ship counter is within bounds, we update it and return TRUE. Otherwise,
+//	we return FALSE.
+
+{
+	//	Get source and device
+
+	CSpaceObject *pSource = ItemCtx.GetSource();
+	if (pSource == NULL)
+		return false;
+
+	CInstalledDevice *pDevice = ItemCtx.GetDevice();
+	if (pDevice == NULL)
+		return false;
+
+	//  If we update the ship's counter, make sure that after increase/decrease we're
+	//  below/above the maximum/minimum counter, respectively.
+
+	if (m_iCounterPerShot > 0)
+	{
+		if (pSource->GetCounterValue() + m_iCounterPerShot > pSource->GetMaxCounterValue())
+		{
+			return false;
+		}
+	}
+	else if (m_iCounterPerShot < 0)
+	{
+		if (pSource->GetCounterValue() + m_iCounterPerShot < 0)
+		{
+			return false;
+		}
+	}
+	pSource->IncCounterValue(m_iCounterPerShot);
+	return true;
+}
 
 bool CWeaponClass::UpdateTemperature (CItemCtx &ItemCtx, CWeaponFireDesc *pShot, CFailureDesc::EFailureTypes *retiFailureMode, bool *retbSourceDestroyed)
 

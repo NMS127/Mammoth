@@ -32,10 +32,12 @@ const Metric MAX_SPEED_FOR_DOCKING2 =			(0.04 * 0.04 * LIGHT_SPEED * LIGHT_SPEED
 const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 
 #define FIELD_CARGO_SPACE						CONSTLIT("cargoSpace")
+#define FIELD_COUNTER_INCREMENT_RATE			CONSTLIT("counterIncrementRate")
 #define FIELD_LAUNCHER							CONSTLIT("launcher")
 #define FIELD_LAUNCHER_UNID						CONSTLIT("launcherUNID")
 #define FIELD_MAX_SPEED							CONSTLIT("maxSpeed")
 #define FIELD_MANEUVER							CONSTLIT("maneuver")
+#define FIELD_MAX_COUNTER						CONSTLIT("maxCounter")
 #define FIELD_NAME								CONSTLIT("name")
 #define FIELD_PRIMARY_ARMOR						CONSTLIT("primaryArmor")
 #define FIELD_PRIMARY_ARMOR_UNID				CONSTLIT("primaryArmorUNID")
@@ -48,6 +50,7 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define FIELD_THRUST_TO_WEIGHT					CONSTLIT("thrustToWeight")
 
 #define PROPERTY_ALWAYS_LEAVE_WRECK				CONSTLIT("alwaysLeaveWreck")
+#define PROPERTY_AUTO_TARGET					CONSTLIT("autoTarget")
 #define PROPERTY_AVAILABLE_DEVICE_SLOTS			CONSTLIT("availableDeviceSlots")
 #define PROPERTY_AVAILABLE_NON_WEAPON_SLOTS		CONSTLIT("availableNonWeaponSlots")
 #define PROPERTY_AVAILABLE_WEAPON_SLOTS			CONSTLIT("availableWeaponSlots")
@@ -55,6 +58,9 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_CARGO_SPACE					CONSTLIT("cargoSpace")
 #define PROPERTY_CARGO_SPACE_FREE_KG			CONSTLIT("cargoSpaceFreeKg")
 #define PROPERTY_CARGO_SPACE_USED_KG			CONSTLIT("cargoSpaceUsedKg")
+#define PROPERTY_COUNTER_INCREMENT_RATE			CONSTLIT("counterIncrementRate")
+#define PROPERTY_COUNTER_VALUE					CONSTLIT("counterValue")
+#define PROPERTY_COUNTER_VALUE_INCREMENT		CONSTLIT("counterValueIncrement")
 #define PROPERTY_CHARACTER						CONSTLIT("character")
 #define PROPERTY_DEVICE_DAMAGE_IMMUNE			CONSTLIT("deviceDamageImmune")
 #define PROPERTY_DEVICE_DISRUPT_IMMUNE			CONSTLIT("deviceDisruptImmune")
@@ -64,12 +70,14 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_DOCKING_PORT_COUNT				CONSTLIT("dockingPortCount")
 #define PROPERTY_DRIVE_POWER					CONSTLIT("drivePowerUse")
 #define PROPERTY_EMP_IMMUNE						CONSTLIT("EMPImmune")
+#define PROPERTY_EXIT_GATE_TIMER				CONSTLIT("exitGateTimer")
 #define PROPERTY_FUEL_LEFT      				CONSTLIT("fuelLeft")
 #define PROPERTY_FUEL_LEFT_EXACT				CONSTLIT("fuelLeftExact")
 #define PROPERTY_HEALER_LEFT        			CONSTLIT("healerLeft")
 #define PROPERTY_HP								CONSTLIT("hp")
 #define PROPERTY_HULL_PRICE						CONSTLIT("hullPrice")
 #define PROPERTY_INTERIOR_HP					CONSTLIT("interiorHP")
+#define PROPERTY_MAX_COUNTER					CONSTLIT("maxCounter")
 #define PROPERTY_MAX_FUEL						CONSTLIT("maxFuel")
 #define PROPERTY_MAX_FUEL_EXACT					CONSTLIT("maxFuelExact")
 #define PROPERTY_MAX_HP							CONSTLIT("maxHP")
@@ -91,6 +99,7 @@ const DWORD MAX_DISRUPT_TIME_BEFORE_DAMAGE =	(60 * g_TicksPerSecond);
 #define PROPERTY_SELECTED_WEAPON				CONSTLIT("selectedWeapon")
 #define PROPERTY_SHATTER_IMMUNE					CONSTLIT("shatterImmune")
 #define PROPERTY_SHOW_MAP_LABEL					CONSTLIT("showMapLabel")
+#define PROPERTY_TARGET							CONSTLIT("target")
 #define PROPERTY_THRUST							CONSTLIT("thrust")
 #define PROPERTY_THRUST_TO_WEIGHT				CONSTLIT("thrustToWeight")
 
@@ -219,14 +228,14 @@ void CShip::AccumulateDeviceEnhancementsToArmor (CInstalledArmor *pArmor, TArray
 	m_Devices.AccumulateEnhancementsToArmor(this, pArmor, EnhancementIDs, pEnhancements);
 	}
 
-void CShip::AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iLifeLeft, DWORD *retdwID)
+void CShip::AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iPosZ, int iLifeLeft, DWORD *retdwID)
 
 //	AddOverlay
 //
 //	Adds an overlay to the ship
 
 	{
-	m_Overlays.AddField(this, pType, iPosAngle, iPosRadius, iRotation, iLifeLeft, retdwID);
+	m_Overlays.AddField(this, pType, iPosAngle, iPosRadius, iRotation, iPosZ, iLifeLeft, retdwID);
 
 	//	Recalc bonuses, etc.
 
@@ -662,12 +671,59 @@ CSpaceObject::InstallItemResults CShip::CalcDeviceToReplace (const CItem &Item, 
 
 	ItemCategories iCategory = pDevice->GetCategory();
 
+	//	See how many device slots we need
+
+	int iSlotsRequired = pDevice->GetSlotsRequired();
+
+	//	Otherwise, check to make sure that we have enough slots.
+
+	bool bIsWeapon = (iCategory == itemcatWeapon || iCategory == itemcatLauncher);
+	bool bIsMisc = (iCategory == itemcatMiscDevice);
+
+	//	Count the number of slots being used up currently
+
+	int iWeapons;
+	int iNonWeapons;
+	int iAll = CalcDeviceSlotsInUse(&iWeapons, &iNonWeapons);
+
+	//	See how many slots we would need to free in order to install this 
+	//	device.
+
+	int iAllSlotsNeeded = (iAll + iSlotsRequired) - Hull.GetMaxDevices();
+	int iWeaponSlotsNeeded = (bIsWeapon
+			&& (Hull.GetMaxWeapons() < Hull.GetMaxDevices())
+				? ((iWeapons + iSlotsRequired) - Hull.GetMaxWeapons())
+				: 0);
+	int iNonWeaponSlotsNeeded = (!bIsWeapon
+			&& (Hull.GetMaxNonWeapons() < Hull.GetMaxDevices())
+				? ((iNonWeapons + iSlotsRequired) - Hull.GetMaxNonWeapons())
+				: 0);
+
 	//	See if if this is a device with an assigned slot (like a shield generator
 	//	or cargo hold, etc.) and the slot is in use, then we need to replace it.
 
+	int iSingletonSlot;
 	if (IsSingletonDevice(iCategory)
-			&& !IsDeviceSlotAvailable(iCategory, retiSlot))
+			&& !IsDeviceSlotAvailable(iCategory, &iSingletonSlot))
 		{
+		if (retiSlot)
+			*retiSlot = iSingletonSlot;
+
+		//	Make sure we have enough slots left (not all devices have 1 slot)
+
+		int iSlotsFreed = m_Devices.GetDevice(iSingletonSlot).GetClass()->GetSlotsRequired();
+
+		if (iCategory == itemcatLauncher
+				&& (iWeaponSlotsNeeded - iSlotsFreed > 0))
+			return insNoWeaponSlotsLeft;
+		else if (iCategory != itemcatLauncher
+				&& (iNonWeaponSlotsNeeded - iSlotsFreed > 0))
+			return insNoNonWeaponSlotsLeft;
+		else if (iAllSlotsNeeded - iSlotsFreed > 0)
+			return insNoDeviceSlotsLeft;
+
+		//	Return the appropriate message
+
 		switch (iCategory)
 			{
 			case itemcatLauncher:
@@ -696,34 +752,6 @@ CSpaceObject::InstallItemResults CShip::CalcDeviceToReplace (const CItem &Item, 
 	if (Hull.GetMaxDevices() == -1
 			&& iSuggestedSlot == -1)
 		return insOK;
-
-	//	See how many device slots we need
-
-	int iSlotsRequired = pDevice->GetSlotsRequired();
-
-	//	Otherwise, check to make sure that we have enough slots.
-
-	bool bIsWeapon = (iCategory == itemcatWeapon || iCategory == itemcatLauncher);
-	bool bIsMisc = (iCategory == itemcatMiscDevice);
-
-	//	Count the number of slots being used up currently
-
-	int iWeapons;
-	int iNonWeapons;
-	int iAll = CalcDeviceSlotsInUse(&iWeapons, &iNonWeapons);
-
-	//	See how many slots we would need to free in order to install this 
-	//	device.
-
-	int iAllSlotsNeeded = (iAll + iSlotsRequired) - Hull.GetMaxDevices();
-	int iWeaponSlotsNeeded = (bIsWeapon
-			&& (Hull.GetMaxWeapons() < Hull.GetMaxDevices())
-				? ((iWeapons + iSlotsRequired) - Hull.GetMaxWeapons())
-				: 0);
-	int iNonWeaponSlotsNeeded = (!bIsWeapon
-			&& (Hull.GetMaxNonWeapons() < Hull.GetMaxDevices())
-				? ((iNonWeapons + iSlotsRequired) - Hull.GetMaxNonWeapons())
-				: 0);
 
 	//	If we have enough space, then we're done
 
@@ -948,7 +976,7 @@ int CShip::CalcPowerUsed (SUpdateCtx &Ctx, int *retiPowerGenerated)
 
 	//	We always consume some power for life-support
 
-	iPowerUsed += 5;
+	iPowerUsed += CPowerConsumption::DEFAULT_LIFESUPPORT_POWER_USE;
 
 	//	If we're thrusting, then we consume power
 
@@ -1000,11 +1028,11 @@ bool CShip::CanInstallItem (const CItem &Item, int iSlot, InstallItemResults *re
 
 	if (Item.IsArmor())
 		{
-		int iMaxArmor = Hull.GetMaxArmorMass();
+		CArmorLimits::EResults iCanInstall = Hull.GetArmorLimits().CanInstallArmor(Item);
 
 		//	See if we are compatible
 
-		if (!Item.MatchesCriteria(Hull.GetArmorCriteria()))
+		if (iCanInstall == CArmorLimits::resultIncompatible)
 			iResult = insNotCompatible;
 
 		//	Ask the object if we can install this item
@@ -1014,7 +1042,7 @@ bool CShip::CanInstallItem (const CItem &Item, int iSlot, InstallItemResults *re
 
 		//	See if the armor is too heavy
 
-		else if (iMaxArmor && Item.GetMassKg() > iMaxArmor)
+		else if (iCanInstall == CArmorLimits::resultTooHeavy)
 			iResult = insArmorTooHeavy;
 
 		//	Fire CanBeInstalled to check for custom conditions
@@ -1508,7 +1536,7 @@ ALERROR CShip::CreateFromClass (CSystem *pSystem,
 	pController->SetShipToControl(pShip);
 	pShip->m_pSovereign = pSovereign;
 	pShip->m_sName = pClass->GenerateShipName(&pShip->m_dwNameFlags);
-	pShip->m_Rotation.Init(pClass->GetRotationDesc(), iRotation);
+	pShip->m_Rotation.Init(pClass->GetIntegralRotationDesc(), iRotation);
 	pShip->m_iFireDelay = 0;
 	pShip->m_iMissileFireDelay = 0;
 	pShip->m_iContaminationTimer = 0;
@@ -1528,6 +1556,7 @@ ALERROR CShip::CreateFromClass (CSystem *pSystem,
 	pShip->m_pMoney = NULL;
 	pShip->m_pPowerUse = NULL;
 	pShip->m_pCharacter = pClass->GetCharacter();
+	pShip->m_iCounterValue = 0;
 
 	pShip->m_fTrackMass = false;
 	pShip->m_fRadioactive = false;
@@ -1742,7 +1771,7 @@ void CShip::DamageCargo (SDamageCtx &Ctx)
 
 		//	Add the overlay (lasts 10-30 seconds real time)
 
-		AddOverlay(pOverlayType, iPosAngle, iPosRadius, iPosAngle, mathRandom(10 * g_TicksPerSecond, 30 * g_TicksPerSecond));
+		AddOverlay(pOverlayType, iPosAngle, iPosRadius, iPosAngle, 0, mathRandom(10 * g_TicksPerSecond, 30 * g_TicksPerSecond));
 		}
 	}
 
@@ -1753,6 +1782,8 @@ void CShip::DamageDevice (CInstalledDevice *pDevice, SDamageCtx &Ctx)
 //	Damages the given device
 
 	{
+	ASSERT(pDevice);
+
 	//	Damage the device
 
 	DamageItem(pDevice);
@@ -1762,7 +1793,7 @@ void CShip::DamageDevice (CInstalledDevice *pDevice, SDamageCtx &Ctx)
 
 	COverlayType *pOverlayType = g_pUniverse->FindOverlayType(UNID_DAMAGED_SITE_SMALL);
 	if (pOverlayType)
-		CSpaceObject::AddOverlay(pOverlayType, Ctx.vHitPos, 180, 9000);
+		AddOverlay(pOverlayType, pDevice->GetPosAngle(), pDevice->GetPosRadius(), 180, pDevice->GetPosZ(), 9000);
 	}
 
 void CShip::DamageDrive (SDamageCtx &Ctx)
@@ -1797,7 +1828,7 @@ void CShip::DamageDrive (SDamageCtx &Ctx)
 		COverlayType *pOverlayType = g_pUniverse->FindOverlayType(UNID_DAMAGED_SITE_MEDIUM);
 		if (pOverlayType
 				&& m_Overlays.GetCountOfType(pOverlayType) < MAX_DRIVE_DAMAGE_OVERLAY_COUNT)
-			CSpaceObject::AddOverlay(pOverlayType, Ctx.vHitPos, 180, iDamageTime);
+			CSpaceObject::AddOverlay(pOverlayType, Ctx.vHitPos, 180, 0, iDamageTime);
 
 		//	Update performance (which also updates effects).
 
@@ -1840,8 +1871,10 @@ void CShip::DamageExternalDevice (int iDev, SDamageCtx &Ctx)
 	CInstalledDevice *pDevice = GetDevice(iDev);
 
 	//	If we're already damaged, then nothing more can happen
+	//	NOTE: This can only happen to external devices. We need this check 
+	//	because the overlay code relies on us to check.
 
-	if (pDevice->IsEmpty() || pDevice->IsDamaged())
+	if (pDevice->IsEmpty() || pDevice->IsDamaged() || !pDevice->IsExternal())
 		return;
 
 	//	If the device gets hit, see if it gets damaged
@@ -2145,7 +2178,7 @@ bool CShip::FindDataField (const CString &sField, CString *retsValue)
 		}
 	else if (strEquals(sField, FIELD_MANEUVER))
 		{
-		Metric rManeuver = g_SecondsPerUpdate * m_Perf.GetRotationDesc().GetMaxRotationSpeedDegrees();
+		Metric rManeuver = g_SecondsPerUpdate * m_Perf.GetIntegralRotationDesc().GetMaxRotationSpeedDegrees();
 		*retsValue = strFromInt((int)((rManeuver * 1000.0) + 0.5));
 		}
 	else if (strEquals(sField, FIELD_THRUST_TO_WEIGHT))
@@ -3016,6 +3049,12 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 	if (strEquals(sName, PROPERTY_ALWAYS_LEAVE_WRECK))
 		return CC.CreateBool(m_fAlwaysLeaveWreck || m_pClass->GetWreckChance() >= 100);
 
+	else if (strEquals(sName, PROPERTY_AUTO_TARGET))
+		{
+		CSpaceObject *pTarget = GetTarget(CItemCtx(), false);
+		return (pTarget ? CC.CreateInteger((int)pTarget) : CC.CreateNil());
+		}
+
 	else if (strEquals(sName, PROPERTY_AVAILABLE_DEVICE_SLOTS))
 		{
 		int iAll = CalcDeviceSlotsInUse();
@@ -3051,6 +3090,12 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		return CC.CreateInteger(mathRound(GetCargoMass() * 1000.0));
 		}
 
+	else if (strEquals(sName, PROPERTY_COUNTER_VALUE))
+		return CC.CreateInteger(GetCounterValue());
+
+	else if (strEquals(sName, PROPERTY_COUNTER_INCREMENT_RATE))
+		return CC.CreateInteger(GetCounterIncrementRate());
+
 	else if (strEquals(sName, PROPERTY_CHARACTER))
 		return (m_pCharacter ? CC.CreateInteger(m_pCharacter->GetUNID()) : CC.CreateNil());
 
@@ -3072,17 +3117,20 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
     else if (strEquals(sName, PROPERTY_DOCKING_PORT_COUNT))
         return CC.CreateInteger(m_DockingPorts.GetPortCount(this));
 
-    else if (strEquals(sName, PROPERTY_HEALER_LEFT))
-        return CC.CreateInteger(m_Armor.GetHealerLeft());
-
 	else if (strEquals(sName, PROPERTY_EMP_IMMUNE))
 		return CC.CreateBool(IsImmuneTo(CConditionSet::cndParalyzed));
+
+	else if (strEquals(sName, PROPERTY_EXIT_GATE_TIMER))
+		return (IsInGate() ? CC.CreateInteger(m_iExitGateTimer) : CC.CreateNil());
 
     else if (strEquals(sName, PROPERTY_FUEL_LEFT))
         return CC.CreateInteger(mathRound(GetFuelLeft() / FUEL_UNITS_PER_STD_ROD));
 
     else if (strEquals(sName, PROPERTY_FUEL_LEFT_EXACT))
         return CC.CreateDouble(GetFuelLeft());
+
+    else if (strEquals(sName, PROPERTY_HEALER_LEFT))
+        return CC.CreateInteger(m_Armor.GetHealerLeft());
 
 	else if (strEquals(sName, PROPERTY_HP))
 		return CC.CreateInteger(GetTotalArmorHP());
@@ -3096,6 +3144,9 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		m_Interior.GetHitPoints(this, m_pClass->GetInteriorDesc(), &iHP);
 		return CC.CreateInteger(iHP);
 		}
+
+	else if (strEquals(sName, PROPERTY_MAX_COUNTER))
+		return CC.CreateInteger(m_pClass->GetHullDesc().GetMaxCounter());
 
 	else if (strEquals(sName, PROPERTY_MAX_FUEL))
         return CC.CreateInteger(mathRound(GetMaxFuel() / FUEL_UNITS_PER_STD_ROD));
@@ -3152,7 +3203,7 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		return CC.CreateInteger(GetRotation());
 
 	else if (strEquals(sName, PROPERTY_ROTATION_SPEED))
-		return CC.CreateDouble(m_Rotation.GetRotationSpeedDegrees(m_Perf.GetRotationDesc()));
+		return CC.CreateDouble(m_Rotation.GetRotationSpeedDegrees(m_Perf.GetIntegralRotationDesc()));
 
 	else if (strEquals(sName, PROPERTY_SELECTED_LAUNCHER))
 		{
@@ -3216,6 +3267,12 @@ ICCItem *CShip::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 
 	else if (strEquals(sName, PROPERTY_MAX_SPEED))
 		return CC.CreateInteger((int)((100.0 * GetMaxSpeed() / LIGHT_SPEED) + 0.5));
+
+	else if (strEquals(sName, PROPERTY_TARGET))
+		{
+		CSpaceObject *pTarget = GetTarget(CItemCtx(), true);
+		return (pTarget ? CC.CreateInteger((int)pTarget) : CC.CreateNil());
+		}
 
 	else if (strEquals(sName, PROPERTY_THRUST))
 		return CC.CreateInteger((int)GetThrustProperty());
@@ -4062,12 +4119,14 @@ void CShip::OnAscended (void)
 
 	{
 	//	Kill any event handlers (these are often used to provide behavior in
-	//	a specific system).
+	//	a specific system). But we only do it for characters, which are expected
+	//	to survive across systems.
 	//
 	//	NOTE: This will restore it back to the default handler from the class,
 	//	if defined.
 
-	SetOverride(NULL);
+	if (GetCharacter())
+		SetOverride(NULL);
 
 	//	Cancel all orders in case we're keeping pointers to other system
 	//	objects.
@@ -4439,7 +4498,7 @@ EDamageResults CShip::OnDamage (SDamageCtx &Ctx)
 			&& !IsImmuneTo(CConditionSet::cndTimeStopped)
 			&& !IsTimeStopped())
 		{
-		AddOverlay(UNID_TIME_STOP_OVERLAY, 0, 0, 0, DEFAULT_TIME_STOP_TIME + mathRandom(0, 29));
+		AddOverlay(UNID_TIME_STOP_OVERLAY, 0, 0, 0, 0, DEFAULT_TIME_STOP_TIME + mathRandom(0, 29));
 
 		//	No damage
 
@@ -4540,6 +4599,11 @@ bool CShip::OnDestroyCheck (DestructionTypes iCause, const CDamageSource &Attack
 	//	Check to see if any devices can prevent the destruction
 
 	if (!m_Devices.OnDestroyCheck(this, iCause, Attacker))
+		return false;
+
+	//	See if the ship class handles this natively.
+
+	if (!FireOnDestroyCheck(iCause, Attacker))
 		return false;
 
 	//	Check to see if the controller can prevent the destruction
@@ -4730,17 +4794,6 @@ void CShip::OnDocked (CSpaceObject *pObj)
 	m_pController->OnDocked(pObj);
 	}
 
-void CShip::OnDockedObjChanged (CSpaceObject *pLocation)
-
-//	OnDockedObjChanged
-//
-//	This is called when the object that we're currently docked
-//	with has changed the items that it has
-
-	{
-	m_pController->OnDockedObjChanged(pLocation);
-	}
-
 void CShip::OnDockingPortDestroyed (void)
 
 //	OnDockingPortDestroyed
@@ -4766,6 +4819,11 @@ bool CShip::OnGateCheck (CTopologyNode *pDestNode, const CString &sDestEntryPoin
 	//	Ask all listeners
 
 	if (!NotifyOnObjGateCheck(this, pDestNode, sDestEntryPoint, pGateObj))
+		return false;
+
+	//	Global event
+
+	if (!g_pUniverse->GetDesignCollection().FireOnGlobalObjGateCheck(this, pDestNode, sDestEntryPoint, pGateObj))
 		return false;
 
 	//	OK to gate
@@ -5172,6 +5230,20 @@ void CShip::OnPaintAnnotations (CG32bitImage &Dest, int x, int y, SViewportPaint
 
 	{
 	m_Overlays.PaintAnnotations(Dest, x, y, Ctx);
+
+	//	Paint facings angle
+
+	if (Ctx.bShowFacingsAngle)
+		{
+		const CG16bitFont &MessageFont = g_pUniverse->GetNamedFont(CUniverse::fontSRSMessage);
+		CString sText = strPatternSubst(CONSTLIT("Facing: %d Angle: %d"), m_Rotation.GetFrameIndex(), GetRotation());
+		MessageFont.DrawText(Dest,
+				x,
+				Ctx.yAnnotations,
+				GetSymbolColor(),
+				sText,
+				CG16bitFont::AlignCenter);
+		}
 	}
 
 void CShip::OnPaintMap (CMapViewportCtx &Ctx, CG32bitImage &Dest, int x, int y)
@@ -5324,6 +5396,8 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 //
 //	DWORD		Controlled ObjID
 //	Controller Data
+//
+//	DWORD		m_iCounterValue
 
 	{
 #ifdef DEBUG_LOAD
@@ -5334,7 +5408,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 
 	//	Load class
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_pClass = g_pUniverse->FindShipClass(dwLoad);
 
 	//	In 144 we started saving the power consumption members in a separate
@@ -5355,10 +5429,15 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 		int iCount = 20;
 		while (iCount-- > 0 && m_pClass == NULL)
 			{
-			Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+			Ctx.pStream->Read(dwLoad);
 			m_pClass = g_pUniverse->FindShipClass(dwLoad);
 			}
 		}
+
+	//	If we still can't find the class, then this is an error.
+
+	if (m_pClass == NULL)
+		throw CException(ERR_FAIL, strPatternSubst(CONSTLIT("Undefined ship class: %08x."), dwLoad));
 
 	//	Load misc stuff
 
@@ -5368,7 +5447,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 
 	m_sName.ReadFromStream(Ctx.pStream);
 	if (Ctx.dwVersion >= 26)
-		Ctx.pStream->Read((char *)&m_dwNameFlags, sizeof(DWORD));
+		Ctx.pStream->Read(m_dwNameFlags);
 	else
 		{
 		if (!m_sName.IsBlank())
@@ -5380,31 +5459,31 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 	//	Load rotation
 
 	if (Ctx.dwVersion >= 97)
-		m_Rotation.ReadFromStream(Ctx, m_pClass->GetRotationDesc());
+		m_Rotation.ReadFromStream(Ctx, m_pClass->GetIntegralRotationDesc());
 	else
 		{
-		Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
-		m_Rotation.Init(m_pClass->GetRotationDesc(), (int)LOWORD(dwLoad));
+		Ctx.pStream->Read(dwLoad);
+		m_Rotation.Init(m_pClass->GetIntegralRotationDesc(), (int)LOWORD(dwLoad));
 		}
 
 	//	Load more
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_iFireDelay = (int)LOWORD(dwLoad);
 	m_iMissileFireDelay = (int)HIWORD(dwLoad);
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	if (Ctx.dwVersion < 144)
 		iReactorGraceTimer143 = (int)LOWORD(dwLoad);
 	m_iContaminationTimer = (int)HIWORD(dwLoad);
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_iBlindnessTimer = (int)LOWORD(dwLoad);
 	m_iParalysisTimer = (int)HIWORD(dwLoad);
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_iExitGateTimer = (int)LOWORD(dwLoad);
 	m_iDisarmedTimer = (int)HIWORD(dwLoad);
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 	m_iLRSBlindnessTimer = (int)LOWORD(dwLoad);
 	m_iDriveDamagedTimer = (int)HIWORD(dwLoad);
 
@@ -5420,23 +5499,23 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 		}
 
 	if (Ctx.dwVersion >= 2)
-		Ctx.pStream->Read((char *)&m_rItemMass, sizeof(Metric));
-	Ctx.pStream->Read((char *)&m_rCargoMass, sizeof(Metric));
+		Ctx.pStream->Read(m_rItemMass);
+	Ctx.pStream->Read(m_rCargoMass);
 	CSystem::ReadObjRefFromStream(Ctx, &m_pDocked);
 	CSystem::ReadObjRefFromStream(Ctx, &m_pExitGate);
 	if (Ctx.dwVersion >= 42)
-		Ctx.pStream->Read((char *)&m_iLastFireTime, sizeof(DWORD));
+		Ctx.pStream->Read(m_iLastFireTime);
 	else
 		m_iLastFireTime = 0;
 
 	if (Ctx.dwVersion >= 96)
-		Ctx.pStream->Read((char *)&m_iLastHitTime, sizeof(DWORD));
+		Ctx.pStream->Read(m_iLastHitTime);
 	else
 		m_iLastHitTime = 0;
 
 	//	Load flags
 
-	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	Ctx.pStream->Read(dwLoad);
 
 	bool bBit01 =				((dwLoad & 0x00000001) ? true : false);
 	m_fRadioactive =			((dwLoad & 0x00000002) ? true : false);
@@ -5525,7 +5604,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 	//	Stealth
 
 	if (Ctx.dwVersion >= 5)
-		Ctx.pStream->Read((char *)&m_iStealth, sizeof(DWORD));
+		Ctx.pStream->Read(m_iStealth);
 	else
 		m_iStealth = stealthNormal;
 
@@ -5555,7 +5634,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 	//	Previous versions stored drive desc UNID
 
     if (Ctx.dwVersion < 127)
-	    Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+	    Ctx.pStream->Read(dwLoad);
 
 	//	Energy fields
 
@@ -5595,7 +5674,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 
 	if (Ctx.dwVersion >= 105)
 		{
-		Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+		Ctx.pStream->Read(dwLoad);
 		if (dwLoad != 0xffffffff)
 			{
 			m_pTrade = new CTradingDesc;
@@ -5622,13 +5701,13 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 	if (Ctx.dwVersion < 77)
 		{
 		DWORD dwCount;
-		Ctx.pStream->Read((char *)&dwCount, sizeof(DWORD));
+		Ctx.pStream->Read(dwCount);
 		if (dwCount)
 			{
 			for (i = 0; i < (int)dwCount; i++)
 				{
 				DWORD dwObjID;
-				Ctx.pStream->Read((char *)&dwObjID, sizeof(DWORD));
+				Ctx.pStream->Read(dwObjID);
 
 				TArray<CSpaceObject *> *pList = Ctx.Subscribed.SetAt(dwObjID);
 				pList->Insert(this);
@@ -5640,7 +5719,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 
 	if (Ctx.dwVersion >= 2)
 		{
-		Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+		Ctx.pStream->Read(dwLoad);
 		if (dwLoad)
 			m_pEncounterInfo = g_pUniverse->FindStationType(dwLoad);
 		}
@@ -5671,7 +5750,7 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 		}
 	else
 		{
-		Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
+		Ctx.pStream->Read(dwLoad);
 
 		//	In previous versions we saved the object ID, so we need to convert:
 
@@ -5721,6 +5800,11 @@ void CShip::OnReadFromStream (SLoadCtx &Ctx)
 		}
 
 	m_pController->ReadFromStream(Ctx, this);
+
+	if (Ctx.dwVersion >= 164)
+		Ctx.pStream->Read(m_iCounterValue);
+	else
+		m_iCounterValue = 0;
 
     //  Recompute performance (because we don't save it).
 
@@ -6041,7 +6125,7 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
 
         //	Update rotation
 
-        m_Rotation.Update(m_Perf.GetRotationDesc(), m_pController->GetManeuver());
+        m_Rotation.Update(m_Perf.GetIntegralRotationDesc(), m_pController->GetManeuver());
 
         //	See if we're accelerating
 
@@ -6070,7 +6154,7 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
             {
             //	Stop thrust is proportional to main engine thrust and maneuverability
 
-            Metric rManeuverAdj = Min((Metric)0.5, m_Perf.GetRotationDesc().GetManeuverRatio());
+            Metric rManeuverAdj = Min((Metric)0.5, m_Perf.GetIntegralRotationDesc().GetManeuverRatio());
             Metric rThrust = rManeuverAdj * GetThrust();
 
             AccelerateStop(rThrust, rSecondsPerTick);
@@ -6084,7 +6168,7 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
         //	Rotate wildly
 
         if (!IsAnchored())
-            m_Rotation.Update(m_Perf.GetRotationDesc(), ((GetDestiny() % 2) ? RotateLeft : RotateRight));
+            m_Rotation.Update(m_Perf.GetIntegralRotationDesc(), ((GetDestiny() % 2) ? RotateLeft : RotateRight));
 
         //	Slow down
 
@@ -6101,7 +6185,7 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
         //	Spin wildly
 
         if (!IsAnchored() && m_Overlays.GetConditions().IsSet(CConditionSet::cndSpinning))
-            m_Rotation.Update(m_Perf.GetRotationDesc(), ((GetDestiny() % 2) ? RotateLeft : RotateRight));
+            m_Rotation.Update(m_Perf.GetIntegralRotationDesc(), ((GetDestiny() % 2) ? RotateLeft : RotateRight));
         }
 
     //	Slow down if an overlay is imposing drag
@@ -6329,6 +6413,20 @@ void CShip::OnUpdate (SUpdateCtx &Ctx, Metric rSecondsPerTick)
 	if (m_iMissileFireDelay > 0)
 		m_iMissileFireDelay--;
 
+	int iCounterIncRate = m_pClass->GetHullDesc().GetCounterIncrementRate();
+	if (iCounterIncRate > 0)
+		{
+		//  If counter increment rate is greater than zero, then we allow the counter value to be unbounded below
+		//  but bounded above
+		m_iCounterValue = Min(m_iCounterValue + iCounterIncRate, m_pClass->GetHullDesc().GetMaxCounter());
+		}
+	else
+		{
+		//  Else we allow the counter value to be unbounded above
+		//  but bounded below
+		m_iCounterValue = Max(0, m_iCounterValue + iCounterIncRate);
+		}
+
 	DEBUG_CATCH
 	}
 
@@ -6390,36 +6488,38 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 //
 //	DWORD		Controller ObjID
 //	Controller Data
+//
+//	DWORD		m_iCounterValue
 
 	{
 	DWORD dwSave;
 
 	dwSave = m_pClass->GetUNID();
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	GetSystem()->WriteSovereignRefToStream(m_pSovereign, pStream);
 
 	m_sName.WriteToStream(pStream);
-	pStream->Write((char *)&m_dwNameFlags, sizeof(DWORD));
+	pStream->Write(m_dwNameFlags);
 
 	m_Rotation.WriteToStream(pStream);
 
 	dwSave = MAKELONG(m_iFireDelay, m_iMissileFireDelay);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	dwSave = MAKELONG(0, m_iContaminationTimer);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	dwSave = MAKELONG(m_iBlindnessTimer, m_iParalysisTimer);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	dwSave = MAKELONG(m_iExitGateTimer, m_iDisarmedTimer);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 	dwSave = MAKELONG(m_iLRSBlindnessTimer, m_iDriveDamagedTimer);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 
-	pStream->Write((char *)&m_rItemMass, sizeof(Metric));
-	pStream->Write((char *)&m_rCargoMass, sizeof(Metric));
+	pStream->Write(m_rItemMass);
+	pStream->Write(m_rCargoMass);
 	WriteObjRefToStream(m_pDocked, pStream);
 	WriteObjRefToStream(m_pExitGate, pStream);
-	pStream->Write((char *)&m_iLastFireTime, sizeof(DWORD));
-	pStream->Write((char *)&m_iLastHitTime, sizeof(DWORD));
+	pStream->Write(m_iLastFireTime);
+	pStream->Write(m_iLastHitTime);
 
 	dwSave = 0;
 	dwSave |= (m_fLRSDisabledByNebula ? 0x00000001 : 0);
@@ -6451,7 +6551,7 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 	dwSave |= (m_fEmergencySpeed ?		0x04000000 : 0);
 	dwSave |= (m_fQuarterSpeed ?		0x08000000 : 0);
 	dwSave |= (m_fHasShipCompartments ?	0x10000000 : 0);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 
 	//	Armor
 
@@ -6463,7 +6563,7 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 
 	//	Stealth
 
-	pStream->Write((char *)&m_iStealth, sizeof(DWORD));
+	pStream->Write(m_iStealth);
 
 	//	Fuel consumption
 
@@ -6496,14 +6596,14 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 	if (m_pTrade)
 		{
 		dwSave = 1;
-		pStream->Write((char *)&dwSave, sizeof(DWORD));
+		pStream->Write(dwSave);
 
 		m_pTrade->WriteToStream(pStream);
 		}
 	else
 		{
 		dwSave = 0xffffffff;
-		pStream->Write((char *)&dwSave, sizeof(DWORD));
+		pStream->Write(dwSave);
 		}
 
 	//	Money
@@ -6514,7 +6614,7 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 	//	Encounter info
 
 	dwSave = (m_pEncounterInfo ? m_pEncounterInfo->GetUNID() : 0);
-	pStream->Write((char *)&dwSave, sizeof(DWORD));
+	pStream->Write(dwSave);
 
 	//	Irradiated by
 
@@ -6528,8 +6628,12 @@ void CShip::OnWriteToStream (IWriteStream *pStream)
 	else
 		{
 		dwSave = 0;
-		pStream->Write((char *)&dwSave, sizeof(DWORD));
+		pStream->Write(dwSave);
 		}
+
+	//  Heat counter
+
+	pStream->Write(m_iCounterValue);
 	}
 
 bool CShip::OrientationChanged (void)
@@ -7142,6 +7246,29 @@ DeviceNames CShip::SelectWeapon (int iDev, int iVariant)
 	return iNamed;
 	}
 
+DeviceNames CShip::SelectWeapon (const CItem &Item)
+
+//	SelectWeaopn
+//
+//	Selects the given weapon to fire as follows:
+//
+//	If Item matches an installed weapon (or launcher) then we select that 
+//	weapon.
+//
+//	Else, if there is an installed weapon that matches the type of Item,
+//	then we select that weapon.
+//
+//	Else, if there is a weapon that fires Item as ammo, then we select that
+//	weapon and that ammo.
+
+	{
+	int iDev, iVariant;
+	if (!m_Devices.FindWeaponByItem(Item, &iDev, &iVariant))
+		return devNone;
+
+	return SelectWeapon(iDev, iVariant);
+	}
+
 void CShip::SendMessage (CSpaceObject *pSender, const CString &sMsg)
 
 //	SendMessage
@@ -7554,7 +7681,7 @@ void CShip::SetOrdersFromGenerator (SShipGeneratorCtx &Ctx)
 			//	If this order requires a target, make sure we have one
 
 			bool bTargetRequired;
-			OrderHasTarget(Ctx.iOrder, &bTargetRequired);
+			IShipController::OrderHasTarget(Ctx.iOrder, &bTargetRequired);
 			if (bTargetRequired && pOrderTarget == NULL)
 				kernelDebugLogPattern("Unable to add ship order %d to ship class %x; no target specified", Ctx.iOrder, GetType()->GetUNID());
 
@@ -7588,6 +7715,16 @@ bool CShip::SetProperty (const CString &sName, ICCItem *pValue, CString *retsErr
 	if (strEquals(sName, PROPERTY_ALWAYS_LEAVE_WRECK))
 		{
 		m_fAlwaysLeaveWreck = !pValue->IsNil();
+		return true;
+		}
+	else if (strEquals(sName, PROPERTY_COUNTER_VALUE))
+		{
+		SetCounterValue(pValue->GetIntegerValue());
+		return true;
+		}
+	else if (strEquals(sName, PROPERTY_COUNTER_VALUE_INCREMENT))
+		{
+		IncCounterValue(pValue->GetIntegerValue());
 		return true;
 		}
 	else if (strEquals(sName, PROPERTY_CHARACTER))
@@ -7626,6 +7763,13 @@ bool CShip::SetProperty (const CString &sName, ICCItem *pValue, CString *retsErr
 			m_pPowerUse->SetFuelLeft(Max(0.0, Min(pValue->GetDoubleValue(), GetMaxFuel())));
         return true;
         }
+
+	else if (strEquals(sName, PROPERTY_EXIT_GATE_TIMER))
+		{
+		if (IsInGate())
+			m_iExitGateTimer = Max(0, pValue->GetIntegerValue());
+		return true;
+		}
 
     else if (strEquals(sName, PROPERTY_HEALER_LEFT))
         {
@@ -7692,7 +7836,7 @@ bool CShip::SetProperty (const CString &sName, ICCItem *pValue, CString *retsErr
 		}
 	else if (strEquals(sName, PROPERTY_ROTATION_SPEED))
 		{
-		m_Rotation.SetRotationSpeedDegrees(m_Perf.GetRotationDesc(), pValue->GetDoubleValue());
+		m_Rotation.SetRotationSpeedDegrees(m_Perf.GetIntegralRotationDesc(), pValue->GetDoubleValue());
 		return true;
 		}
 

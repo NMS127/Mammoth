@@ -5,55 +5,146 @@
 
 #pragma once
 
+//	NOTE: We don't add default armor limits. Ship classes without explicit
+//	armor limits have no limitation.
+//
+//#define APPLY_DEFAULT_ARMOR_LIMITS
+
+class CShipClass;
+
+//	Armor Limits
+
+class CArmorLimits
+	{
+	public:
+		static constexpr int INVALID_SPEED_BONUS = -100;
+
+		enum EResults
+			{
+			resultOK,
+			resultTooHeavy,
+			resultIncompatible,
+			};
+
+		struct SSummary
+			{
+			int iMaxArmorMass = 0;				//	Max armor mass that can be installed
+			int iStdArmorMass = 0;				//	Max armor mass that has no penalty
+			int iMaxSpeedBonus = 0;				//	Largest speed bonus (i.e., at min armor)
+			int iMaxSpeedPenalty = 0;			//	Largest speed penalty (negative value, at max armor)
+
+			Metric rMaxArmorFrequency = 0.0;	//	Fraction of all armor types that can be installed
+			Metric rStdArmorFrequency = 0.0;	//	Fraction of all armor types that have no penalty
+			};
+
+		ALERROR Bind (SDesignLoadCtx &Ctx);
+		int CalcArmorSpeedBonus (const TArray<CItemCtx> &Armor) const;
+		bool CalcArmorSpeedBonus (CItemCtx &ArmorItem, int iSegmentCount, int *retiBonus = NULL) const;
+		bool CalcArmorSpeedBonus (const CString &sArmorClassID, int iSegmentCount, int *retiBonus = NULL) const;
+		ICCItem *CalcMaxSpeedByArmorMass (CCodeChainCtx &Ctx, int iStdSpeed) const;
+		void CalcSummary (const CArmorMassDefinitions &Defs, SSummary &Summary) const;
+		EResults CanInstallArmor (const CItem &Item) const;
+		inline const CString &GetMaxArmorClass (void) const { return m_sMaxArmorClass; }
+		inline int GetMaxArmorMass (void) const { return m_iMaxArmorMass; }
+		inline int GetMaxArmorSpeedPenalty (void) const { return m_iMaxArmorSpeedPenalty; }
+		inline int GetMinArmorSpeedBonus (void) const { return m_iMinArmorSpeedBonus; }
+		inline const CString &GetStdArmorClass (void) const { return m_sStdArmorClass; }
+		inline int GetStdArmorMass (void) const { return m_iStdArmorMass; }
+		inline bool HasArmorLimits (void) const { return (m_iType != typeNone); }
+		void InitDefaultArmorLimits (int iMass, int iMaxSpeed, Metric rThrustRatio);
+		ALERROR InitArmorLimitsFromXML (SDesignLoadCtx &Ctx, CXMLElement *pLimits);
+		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, int iHullMass, int iMaxSpeed);
+
+	private:
+		enum ETypes
+			{
+			typeNone,							//	No armor limits (any armor is valid; no speed adj)
+
+			typeAuto,							//	Specify standard and max armor mass and compute speed adj
+			typeTable,							//	Use an explicit table to set speed adj
+			typeCompatible,						//	Specify standard, max, and speed bonus/penalties
+			};
+
+		struct SArmorLimits
+			{
+			CString sClass;
+			TUniquePtr<CItemCriteria> pCriteria;
+
+			int iSpeedAdj = 0;					//	Change to speed for this armor class
+			};
+
+		int CalcArmorMass (CItemCtx &ArmorItem) const;
+		int CalcArmorSpeedBonus (int iSegmentCount, int iTotalArmorMass) const;
+		int CalcMinArmorMassForSpeed (int iSpeed, int iStdSpeed) const;
+		bool FindArmorLimits (CItemCtx &ItemCtx, const SArmorLimits **retpLimits = NULL, bool *retbClassFound = NULL) const;
+
+		ETypes m_iType = typeNone;
+		CItemCriteria m_ArmorCriteria;			//	Allowable armor
+
+		CString m_sStdArmorClass;
+		CString m_sMaxArmorClass;
+		int m_iStdArmorMass = 0;				//	No penalty at this armor mass
+		int m_iMaxArmorMass = 0;				//	Max mass of single armor segment
+		int m_iMaxArmorSpeedPenalty = 0;		//	Change to speed at max armor mass (1/100th light-speed)
+		int m_iMinArmorSpeedBonus = 0;			//	Change to speed at 1/2 std armor mass
+
+		TArray<SArmorLimits> m_ArmorLimits;		//	List of limits by armor class for ship
+
+		int m_iHullMass = 0;					//	Cached and used in various calculations
+
+		const SArmorLimits *m_pMaxArmorLimits = NULL;
+		const SArmorLimits *m_pStdArmorLimits = NULL;
+	};
+
 //	Hull Descriptor ------------------------------------------------------------
 
 class CHullDesc
 	{
 	public:
+
 		ALERROR Bind (SDesignLoadCtx &Ctx);
-		int CalcArmorSpeedBonus (int iSegmentCount, int iTotalArmorMass) const;
-		ICCItem *CalcMaxSpeedByArmorMass (CCodeChainCtx &Ctx, int iStdSpeed) const;
-		inline const CItemCriteria &GetArmorCriteria (void) const { return m_ArmorCriteria; }
+		inline const CArmorLimits &GetArmorLimits (void) const { return m_ArmorLimits; }
 		inline int GetCargoSpace (void) const { return m_iCargoSpace; }
+		inline int GetCounterIncrementRate(void) const { return m_iCounterIncrementRate; }
 		inline int GetCyberDefenseLevel (void) const { return m_iCyberDefenseLevel; }
 		inline const CItemCriteria &GetDeviceCriteria (void) const { return m_DeviceCriteria; }
 		inline Metric GetExtraPoints (void) const { return m_rExtraPoints; }
 		inline int GetMass (void) const { return m_iMass; }
-		inline int GetMaxArmorMass (void) const { return m_iMaxArmorMass; }
-		inline int GetMaxArmorSpeedPenalty (void) const { return m_iMaxArmorSpeedPenalty; }
 		inline int GetMaxCargoSpace (void) const { return m_iMaxCargoSpace; }
+		inline int GetMaxCounter(void) const { return m_iMaxCounter; }
 		inline int GetMaxDevices (void) const { return m_iMaxDevices; }
 		inline int GetMaxNonWeapons (void) const { return m_iMaxNonWeapons; }
 		inline int GetMaxReactorPower (void) const { return m_iMaxReactorPower; }
 		inline int GetMaxWeapons (void) const { return m_iMaxWeapons; }
-		inline int GetMinArmorSpeedBonus (void) const { return m_iMinArmorSpeedBonus; }
 		inline int GetSize (void) const { return m_iSize; }
-		inline int GetStdArmorMass (void) const { return m_iStdArmorMass; }
 		inline const CCurrencyAndValue &GetValue (void) const { return m_Value; }
+		inline bool HasArmorLimits (void) const { return m_ArmorLimits.HasArmorLimits(); }
 		inline void InitCyberDefenseLevel (int iLevel) { if (m_iCyberDefenseLevel == -1) m_iCyberDefenseLevel = iLevel; }
-		void InitDefaultArmorLimits (int iMaxSpeed, Metric rThrustRatio);
+		inline void InitDefaultArmorLimits (int iMaxSpeed, Metric rThrustRatio) { m_ArmorLimits.InitDefaultArmorLimits(m_iMass, iMaxSpeed, rThrustRatio); }
 		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, int iMaxSpeed);
 		inline bool IsTimeStopImmune (void) const { return m_bTimeStopImmune; }
+#ifdef APPLY_DEFAULT_ARMOR_LIMITS
+		inline bool NeedsDefaultArmorLimits (void) const { return (m_ArmorLimits.GetMaxArmorMass() == 0 && GetMass() > 0 && GetMass() < 1000); }
+#else
+		inline bool NeedsDefaultArmorLimits (void) const { return false; }
+#endif
 		inline void SetSize (int iSize) { m_iSize = iSize; }
 		inline void SetMaxCargoSpace (int iCargoSpace) { m_iMaxCargoSpace = iCargoSpace; }
 		inline void SetValue (const CCurrencyAndValue &Value) { m_Value = Value; }
 
 	private:
-		int CalcMinArmorMassForSpeed (int iSpeed, int iStdSpeed) const;
 
 		int m_iSize = 0;					//	Length of ship in meters
 		int m_iMass = 0;					//	Empty hull mass (tons)
 		CCurrencyAndValue m_Value;			//	Value of hull alone (excluding any devices/armor)
 		int m_iCargoSpace = 0;				//	Default cargo space (tons)
+		int m_iCounterIncrementRate = 0;	//  Value by which temperature/capacitor counter is updated every tick
 
-		CItemCriteria m_ArmorCriteria;		//	Allowable armor
 		CItemCriteria m_DeviceCriteria;		//	Allowable devices
-		int m_iStdArmorMass = 0;			//	No penalty at this armor mass
-		int m_iMaxArmorMass = 0;			//	Max mass of single armor segment
-		int m_iMaxArmorSpeedPenalty = 0;	//	Change to speed at max armor mass (1/100th light-speed)
-		int m_iMinArmorSpeedBonus = 0;		//	Change to speed at 1/2 std armor mass
+		CArmorLimits m_ArmorLimits;			//	Adjustments based on armor
 
 		int m_iMaxCargoSpace = 0;			//	Max amount of cargo space with expansion (tons)
+		int m_iMaxCounter = 0;				//  Max value of counter (used for temperature or capacitor)
 		int m_iMaxReactorPower = 0;			//	Max compatible reactor power
 		int m_iMaxDevices = 0;				//	Max number of devices
 		int m_iMaxWeapons = 0;				//	Max number of weapon devices (including launchers)
@@ -64,6 +155,43 @@ class CHullDesc
 		int m_iCyberDefenseLevel = -1;		//	-1 = same as ship level
 
 		bool m_bTimeStopImmune = false;		//	If TRUE, we're immune to timestop
+	};
+
+class CHullPointsCalculator
+	{
+	public:
+		enum EHullPoints
+			{
+			fieldFullSlots			= 0,
+			fieldPartialSlots		= 1,
+			fieldCargoSpace			= 2,
+			fieldMaxCargoSpace		= 3,
+			fieldArmorCount			= 4,
+			fieldStdArmorMass		= 5,
+			fieldMaxArmorMass		= 6,
+			fieldMaxSpeed			= 7,
+			fieldThrustRatio		= 8,
+			fieldDrivePowerUse		= 9,
+			fieldManeuverability	= 10,
+			fieldDeviceSlots		= 11,
+			fieldExtra				= 12,
+
+			fieldCount				= 13,
+			};
+
+		CHullPointsCalculator (const CShipClass &Class);
+
+		inline Metric GetField (int iIndex) const { return m_Data[iIndex]; }
+		inline int GetFieldCount (void) const { return fieldCount; }
+		inline Metric GetTotalPoints (void) const { return m_rTotalPoints; }
+		CurrencyValue GetValueInCredits (void) const;
+
+		static CString GetFieldName (int iIndex);
+
+	private:
+		int m_iMaxReactorPower = 0;
+		Metric m_Data[fieldCount] = { 0.0 };
+		Metric m_rTotalPoints = 0.0;
 	};
 
 //	Wreck Descriptor -----------------------------------------------------------
@@ -179,11 +307,12 @@ class CShipClass : public CDesignType
 		CShipClass (void);
 		virtual ~CShipClass (void);
 
-		inline int Angle2Direction (int iAngle) const { return m_Perf.GetRotationDesc().GetFrameIndex(iAngle); }
-		inline int AlignToRotationAngle (int iAngle) const { return m_Perf.GetRotationDesc().AlignToRotationAngle(iAngle); }
-		int CalcArmorSpeedBonus (int iTotalArmorMass) const;
+		inline int Angle2Direction (int iAngle) const { return m_Perf.GetIntegralRotationDesc().GetFrameIndex(iAngle); }
+		inline int AlignToRotationAngle (int iAngle) const { return m_Perf.GetIntegralRotationDesc().AlignToRotationAngle(iAngle); }
+		Metric CalcFuelEfficiency (const CDeviceDescList &Devices) const;
 		inline int CalcImageSize (void) const { return m_Interior.CalcImageSize(const_cast<CShipClass *>(this)); }
 		Metric CalcMass (const CDeviceDescList &Devices) const;
+		int CalcRatedPowerUse (const CDeviceDescList &Devices) const;
 		int CalcScore (void);
 		bool CreateEmptyWreck (CSystem *pSystem, CShip *pShip, const CVector &vPos, const CVector &vVel, CSovereign *pSovereign, CStation **retpWreck);
 		void CreateImage (CG32bitImage &Dest, int iTick, int iRotation, Metric rScale = 1.0);
@@ -207,6 +336,7 @@ class CShipClass : public CDesignType
 		inline DWORD GetDefaultBkgnd (void) const { return m_dwDefaultBkgnd; }
 		inline CDesignType *GetDefaultEventHandler (void) const { return m_EventHandler; }
 		inline CSovereign *GetDefaultSovereign (void) const { return m_pDefaultSovereign; }
+		inline IDeviceGenerator *GetDeviceSlots (void) const { return m_pDeviceSlots; }
 		inline const CDockingPorts &GetDockingPorts (void) { return m_DockingPorts; }
 		CVector GetDockingPortOffset (int iRotation);
         const CDriveDesc &GetDriveDesc (const CItem **retpDriveItem = NULL) const;
@@ -217,7 +347,9 @@ class CShipClass : public CDesignType
 		inline CDesignType *GetFirstDockScreen (CString *retsName) { return m_pDefaultScreen.GetDockScreen(this, retsName); }
         const CObjectImageArray &GetHeroImage (void);
 		inline const CHullDesc &GetHullDesc (void) const { return m_Hull; }
+		inline const CDriveDesc &GetHullDriveDesc (void) const { return m_DriveDesc; }
 		inline const CReactorDesc *GetHullReactorDesc (void) { return &m_ReactorDesc; }
+		inline const CRotationDesc &GetHullRotationDesc (void) const { return m_RotationDesc; }
 		inline const CShipArmorSegmentDesc &GetHullSection (int iIndex) const { return m_Armor.GetSegment(iIndex); }
 		int GetHullSectionAtAngle (int iAngle);
 		inline int GetHullSectionCount (void) const { return m_Armor.GetCount(); }
@@ -225,6 +357,7 @@ class CShipClass : public CDesignType
 		CCurrencyAndValue GetHullValue (CShip *pShip = NULL) const;
 		const CObjectImageArray &GetImage (const CImageFilterStack *pFilters = NULL) const;
 		inline int GetImageViewportSize (void) const { return m_Image.GetSimpleImage().GetImageViewportSize(); }
+		inline const CIntegralRotationDesc &GetIntegralRotationDesc (void) const { return m_Perf.GetIntegralRotationDesc(); }
         inline const CAttributeDataBlock &GetInitialData (void) const { return m_InitialData; }
 		inline const CShipInteriorDesc &GetInteriorDesc (void) const { return m_Interior; }
 		int GetMaxStructuralHitPoints (void) const;
@@ -233,12 +366,13 @@ class CShipClass : public CDesignType
 		CVector GetPosOffset (int iAngle, int iRadius, int iPosZ, bool b3DPos = true);
 		inline IItemGenerator *GetRandomItemTable (void) const { return m_pItems; }
         const CReactorDesc &GetReactorDesc (const CItem **retpReactorItem = NULL) const;
-		inline int GetRotationAngle (void) { return m_Perf.GetRotationDesc().GetFrameAngle(); }
-		inline const CIntegralRotationDesc &GetRotationDesc (void) const { return m_Perf.GetRotationDesc(); }
-		inline int GetRotationRange (void) { return m_Perf.GetRotationDesc().GetFrameCount(); }
+		inline int GetRotationAngle (void) { return m_Perf.GetIntegralRotationDesc().GetFrameAngle(); }
+		inline const CRotationDesc &GetRotationDesc (void) const { return m_Perf.GetRotationDesc(); }
+		inline int GetRotationRange (void) { return m_Perf.GetIntegralRotationDesc().GetFrameCount(); }
 		inline int GetScore (void) { return m_iScore; }
 		inline DWORD GetShipNameFlags (void) { return m_dwShipNameFlags; }
 		CString GetShortName (void) const;
+		inline Metric GetThrustRatio (void) const { return m_rThrustRatio; }
 		inline const CString &GetClassName (void) const { return m_sName; }
 		inline const CString &GetManufacturerName (void) const { return m_sManufacturer; }
 		inline const CString &GetShipTypeName (void) const { return m_sTypeName; }
@@ -296,7 +430,7 @@ class CShipClass : public CDesignType
 		static CShipClass *AsType (CDesignType *pType) { return ((pType && pType->GetType() == designShipClass) ? (CShipClass *)pType : NULL); }
 		virtual bool FindDataField (const CString &sField, CString *retsValue) const override;
 		virtual CCommunicationsHandler *GetCommsHandler (void) override;
-		virtual CEconomyType *GetEconomyType (void) const;
+		virtual const CEconomyType *GetEconomyType (void) const;
 		virtual int GetLevel (int *retiMinLevel = NULL, int *retiMaxLevel = NULL) const override { if (retiMinLevel) *retiMinLevel = m_iLevel; if (retiMaxLevel) *retiMaxLevel = m_iLevel; return m_iLevel; }
 		virtual CString GetNamePattern (DWORD dwNounFormFlags = 0, DWORD *retdwFlags = NULL) const override;
 		virtual CCurrencyAndValue GetTradePrice (CSpaceObject *pObj = NULL, bool bActual = false) const override;
@@ -354,7 +488,7 @@ class CShipClass : public CDesignType
 		Metric CalcDamageRate (int *retiAveWeaponLevel = NULL, int *retiMaxWeaponLevel = NULL) const;
 		Metric CalcDefenseRate (void) const;
 		inline Metric CalcDodgeRate (void) const { return CalcManeuverValue(true); }
-		CurrencyValue CalcHullValue (void) const;
+		CurrencyValue CalcHullValue (Metric *retrPoints = NULL) const;
 		int CalcLevel (void) const;
 		Metric CalcManeuverValue (bool bDodge = false) const;
 		ICCItem *CalcMaxSpeedByArmorMass (CCodeChainCtx &Ctx) const;
@@ -370,7 +504,7 @@ class CShipClass : public CDesignType
 		void FindBestMissile (CDeviceClass *pLauncher, IItemGenerator *pItems, CItemType **retpMissile) const;
 		void FindBestMissile (CDeviceClass *pLauncher, const CItemList &Items, CItemType **retpMissile) const;
 		CString GetGenericName (DWORD *retdwFlags = NULL) const;
-		inline int GetManeuverDelay (void) const { return m_Perf.GetRotationDesc().GetManeuverDelay(); }
+		inline int GetManeuverDelay (void) const { return m_Perf.GetIntegralRotationDesc().GetManeuverDelay(); }
 		void InitShipNamesIndices (void);
 
 		static int CalcDefaultSize (const CObjectImageArray &Image);
@@ -395,7 +529,7 @@ class CShipClass : public CDesignType
 
 		CHullDesc m_Hull;						//	Basic hull definitions
 		CRotationDesc m_RotationDesc;	        //	Rotation and maneuverability
-		double m_rThrustRatio;					//	If non-zero, then m_DriveDesc thrust is set based on this.
+		Metric m_rThrustRatio;					//	If non-zero, then m_DriveDesc thrust is set based on this.
 		CDriveDesc m_DriveDesc;					//	Drive descriptor
 		CReactorDesc m_ReactorDesc;				//	Reactor descriptor
 		CShipwreckDesc m_WreckDesc;				//	Wreck descriptor
@@ -465,7 +599,7 @@ class CShipClass : public CDesignType
 		DWORD m_fInheritedTrade:1;				//	TRUE if m_pTrade is inherited from another class
 		DWORD m_fShipCompartment:1;				//	TRUE if we represent an attached compartment/segment
 		DWORD m_fInheritedDeviceSlots:1;		//	TRUE if m_pDeviceSlots is inherited from another class
-		DWORD m_fSpare4:1;
+		DWORD m_fHullValueOverride:1;			//	TRUE if hull value is specifed in XML
 		DWORD m_fSpare5:1;
 		DWORD m_fSpare6:1;
 		DWORD m_fSpare7:1;

@@ -245,8 +245,10 @@
     <ClInclude Include="..\Include\TSEArtifactAwakening.h" />
     <ClInclude Include="..\Include\TSEComms.h" />
     <ClInclude Include="..\Include\TSECurrency.h" />
+    <ClInclude Include="..\Include\TSEDesignDefs.h" />
     <ClInclude Include="..\Include\TSEDevices.h" />
     <ClInclude Include="..\Include\TSEDocking.h" />
+    <ClInclude Include="..\Include\TSEDockScreenSession.h" />
     <ClInclude Include="..\Include\TSEDockScreenType.h" />
     <ClInclude Include="..\Include\TSEEconomyType.h" />
     <ClInclude Include="..\Include\TSEEffects.h" />
@@ -284,6 +286,7 @@
     <ClInclude Include="..\Include\TSESystemType.h" />
     <ClInclude Include="..\Include\TSETopology.h" />
     <ClInclude Include="..\Include\TSETrade.h" />
+    <ClInclude Include="..\Include\TSETransLispUtil.h" />
     <ClInclude Include="..\Include\TSEUniverse.h" />
     <ClInclude Include="..\Include\TSEUtil.h" />
     <ClInclude Include="..\Include\TSEVersions.h" />
@@ -318,6 +321,8 @@
     <ClCompile Include="CAdventureRecord.cpp" />
     <ClCompile Include="CAISettings.cpp" />
     <ClCompile Include="CApproachOrder.cpp" />
+    <ClCompile Include="CArmorLimits.cpp" />
+    <ClCompile Include="CArmorMassDefinitions.cpp" />
     <ClCompile Include="CArmorSystem.cpp" />
     <ClCompile Include="CArtifactAwakening.cpp" />
     <ClCompile Include="CArtifactProgram.cpp" />
@@ -373,7 +378,9 @@
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='SteamRelease|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="CDockScreenStack.cpp" />
     <ClCompile Include="CDockScreenVisuals.cpp" />
+    <ClCompile Include="CDockSession.cpp" />
     <ClCompile Include="CDriveDesc.cpp" />
     <ClCompile Include="CEffectParamDesc.cpp" />
     <ClCompile Include="CEnhancementDesc.cpp" />
@@ -385,6 +392,7 @@
     <ClCompile Include="CGenericType.cpp" />
     <ClCompile Include="CHitCtx.cpp" />
     <ClCompile Include="CHullDesc.cpp" />
+    <ClCompile Include="CHullPointsCalculator.cpp" />
     <ClCompile Include="CImageFilterDesc.cpp" />
     <ClCompile Include="CImageFilterStack.cpp" />
     <ClCompile Include="CIntegralRotationDesc.cpp" />
@@ -415,6 +423,7 @@
     <ClCompile Include="CPhysicsContactResolver.cpp" />
     <ClCompile Include="CPlayerGameStats.cpp" />
     <ClCompile Include="CPowerConsumption.cpp" />
+    <ClCompile Include="CPropertyCompare.cpp" />
     <ClCompile Include="CRandomTopologyCreator.cpp" />
     <ClCompile Include="CRangeTypeEvent.cpp" />
     <ClCompile Include="CRotationDesc.cpp" />
@@ -471,10 +480,13 @@
     <ClCompile Include="CShockwaveHitTest.cpp" />
     <ClCompile Include="CEnvironmentGrid.cpp" />
     <ClCompile Include="CMusicResource.cpp" />
+    <ClCompile Include="CSimpleOrder.cpp" />
     <ClCompile Include="CSimplePathStargateGenerator.cpp" />
     <ClCompile Include="CSoundResource.cpp" />
     <ClCompile Include="CSpaceObjectAddressResolver.cpp" />
     <ClCompile Include="CSpaceObjectCriteria.cpp" />
+    <ClCompile Include="CSpaceObjectItemList.cpp" />
+    <ClCompile Include="CSpaceObjectPool.cpp" />
     <ClCompile Include="CSpaceObjectTrade.cpp" />
     <ClCompile Include="CSphericalTextureMapper.cpp" />
     <ClCompile Include="CStationEncounterCtx.cpp" />
@@ -552,6 +564,7 @@
     <ClCompile Include="IElementGenerator.cpp" />
     <ClCompile Include="IListData.cpp" />
     <ClCompile Include="IPlayerController.cpp" />
+    <ClCompile Include="IShipController.cpp" />
     <ClCompile Include="SDamageCtx.cpp" />
     <ClCompile Include="SFXDisintegrate.cpp" />
     <ClCompile Include="SFXLightningStorm.cpp" />

@@ -698,7 +698,7 @@ void CVisualPalette::CreateImageButtonSmall (CAniSequencer *pContainer,
 		*retpControl = pButton;
 	}
 
-void CVisualPalette::CreateLink (CAniSequencer *pContainer,
+void CVisualPalette::CreateLink (IAnimatron *pContainer,
 								 const CString &sID,
 								 int x,
 								 int y,
@@ -765,7 +765,7 @@ void CVisualPalette::CreateLink (CAniSequencer *pContainer,
 	//	Add
 
 	if (pContainer)
-		pContainer->AddTrack(pButton, 0);
+		pContainer->AddElement(pButton, 0);
 
 	//	Compute height and width
 
@@ -1056,6 +1056,44 @@ void CVisualPalette::CreateStdDialog (const RECT &rcRect, const CString &sTitle,
 
 	*retpDlg = pDlg;
 	*retpContainer = pContainer;
+	}
+
+void CVisualPalette::CreateCartoucheArea (CAniSequencer *pContainer,
+										  const CString &sID,
+										  int x,
+										  int y,
+										  int cxWidth,
+										  const TArray<CCartoucheBlock::SCartoucheDesc> &List,
+										  const CG16bitFont &Font, 
+										  IAnimatron **retpControl,
+										  int *retcyHeight) const
+
+//	CreateCartoucheArea
+//
+//	Creates a cartouche block
+
+	{
+	IAnimatron *pAni;
+	CAniCartoucheBlock::Create(List, CVector(x, y), cxWidth, &Font, &pAni);
+
+    //  Compute the height, if requested
+
+    if (retcyHeight)
+        {
+	    RECT rcLine;
+	    pAni->GetSpacingRect(&rcLine);
+    	*retcyHeight = RectHeight(rcLine);
+        }
+
+    //  Add to container, if necessary
+
+    if (pContainer)
+        pContainer->AddTrack(pAni, 0);
+
+    //  Return control, if requested
+
+    if (retpControl)
+        *retpControl = pAni;
 	}
 
 void CVisualPalette::CreateTextArea (CAniSequencer *pContainer, 

@@ -257,7 +257,7 @@ class CDeviceClass
         virtual ICCItem *FindAmmoItemProperty (CItemCtx &Ctx, const CItem &Ammo, const CString &sProperty) { return CDeviceClass::FindItemProperty(Ctx, sProperty); }
 		virtual bool FindDataField (const CString &sField, CString *retsValue) { return false; }
 		virtual ICCItem *FindItemProperty (CItemCtx &Ctx, const CString &sName);
-		virtual int GetActivateDelay (CInstalledDevice *pDevice, CSpaceObject *pSource) const { return 0; }
+		virtual int GetActivateDelay (CItemCtx &ItemCtx) const { return 0; }
 		virtual int GetAmmoVariant (const CItemType *pItem) const { return -1; }
 		virtual int GetCounter (CInstalledDevice *pDevice, CSpaceObject *pSource, CounterTypes *retiType = NULL, int *retiLevel = NULL) { return 0; }
 		virtual const CCargoDesc *GetCargoDesc (CItemCtx &Ctx) const { return NULL; }
@@ -272,7 +272,7 @@ class CDeviceClass
 
 		static const DWORD GPO_FLAG_NORMAL_POWER = 0x00000001;	//	Power when not damage and not enhanced
 		virtual int GetPowerOutput (CItemCtx &Ctx, DWORD dwFlags = 0) const { return 0; }
-		virtual int GetPowerRating (CItemCtx &Ctx) const { return 0; }
+		virtual int GetPowerRating (CItemCtx &Ctx, int *retiIdlePowerUse = NULL) const { if (retiIdlePowerUse) *retiIdlePowerUse = 0; return 0; }
 		virtual bool GetReferenceDamageAdj (const CItem *pItem, CSpaceObject *pInstalled, int *retiHP, int *retArray) const { return false; }
 		virtual bool GetReferenceDamageType (CItemCtx &Ctx, const CItem &Ammo, DamageTypes *retiDamage, CString *retsReference) const { return false; }
 		virtual DeviceRotationTypes GetRotationType (CItemCtx &Ctx, int *retiMinArc = NULL, int *retiMaxArc = NULL) const { return rotNone; }
@@ -428,6 +428,7 @@ class IDeviceGenerator
 		virtual ~IDeviceGenerator (void) { }
 		virtual void AddDevices (SDeviceGenerateCtx &Ctx) { }
 		virtual void AddTypesUsed (TSortMap<DWORD, bool> *retTypesUsed) { }
+		virtual Metric CalcHullPoints (void) const { return 0.0; }
 		virtual IDeviceGenerator *GetGenerator (int iIndex) { return NULL; }
 		virtual int GetGeneratorCount (void) { return 0; }
 		virtual bool HasItemAttribute (const CString &sAttrib) const { return false; }
@@ -438,6 +439,7 @@ class IDeviceGenerator
 		virtual bool FindDefaultDesc (DeviceNames iDev, SDeviceDesc *retDesc) const { return false; }
 		virtual bool FindDefaultDesc (CSpaceObject *pSource, const CItem &Item, SDeviceDesc *retDesc) const { return false; }
 		virtual bool FindDefaultDesc (const CDeviceDescList &DescList, const CItem &Item, SDeviceDesc *retDesc) const { return false; }
+		virtual bool FindDefaultDesc (const CDeviceDescList &DescList, const CString &sID, SDeviceDesc *retDesc) const { return false; }
 
 		static ALERROR InitDeviceDescFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, SDeviceDesc *retDesc);
 	};
@@ -505,6 +507,7 @@ class CInstalledDevice
 		inline bool IsReady (void) const { return (m_iTimeUntilReady == 0); }
 		inline bool IsRegenerating (void) const { return (m_fRegenerating ? true : false); }
 		inline bool IsTriggered (void) const { return (m_fTriggered ? true : false); }
+		inline bool IsWorking (void) const { return (IsEnabled() && !IsDamaged() && !IsDisrupted()); }
 		inline bool IsWaiting (void) const { return (m_fWaiting ? true : false); }
 		inline void SetActivateDelay (int iDelay) { m_iActivateDelay = iDelay; }
 		inline void SetData (DWORD dwData) { m_dwData = dwData; }
@@ -568,7 +571,7 @@ class CInstalledDevice
 		inline CString GetName (void) { return m_pClass->GetName(); }
 		CVector GetPos (CSpaceObject *pSource);
 		CVector GetPosOffset (CSpaceObject *pSource);
-		inline int GetPowerRating (CItemCtx &Ctx) const { return m_pClass->GetPowerRating(Ctx); }
+		inline int GetPowerRating (CItemCtx &Ctx, int *retiIdlePowerUse = NULL) const { return m_pClass->GetPowerRating(Ctx, retiIdlePowerUse); }
 		inline void GetSelectedVariantInfo (CSpaceObject *pSource, 
 											CString *retsLabel,
 											int *retiAmmoLeft,

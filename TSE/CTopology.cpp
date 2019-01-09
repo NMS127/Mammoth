@@ -1234,6 +1234,100 @@ int CTopology::GetDistance (const CTopologyNode *pSrc, const CTopologyNode *pDes
 	return (iBestDist != INFINITE_DISTANCE ? iBestDist : -1);
 	}
 
+int CTopology::GetDistance (const CTopologyNode *pSrc, const CTopologyNode::SAttributeCriteria &Criteria) const
+
+//	GetDistance
+//
+//	Returns the shortest distance between pSrc and any node that matches the given criteria.
+//	If no matching nodes are found, then we return -1.
+
+	{
+	int i;
+
+	if (GetTopologyNodeCount() < 2)
+		return -1;
+
+	//	We mark nodes to track our progress, so we have to save the
+	//	previous value of the marks.
+	//
+	//	We also initialize the calculated distance to either UNKNOWN_DISTANCE
+	//	or 0, depending on whether we match.
+
+	CLargeSet OldMarks;
+	for (i = 0; i < GetTopologyNodeCount(); i++)
+		{
+		CTopologyNode *pNode = GetTopologyNode(i);
+		if (pNode->IsMarked())
+			OldMarks.Set(i);
+
+		pNode->SetMarked(false);
+		if (pNode->MatchesAttributeCriteria(Criteria))
+			pNode->SetCalcDistance(0);
+		else
+			pNode->SetCalcDistance(UNKNOWN_DISTANCE);
+		}
+
+	//	Loop over all gates and recurse
+
+	int iBestDist = GetDistance(pSrc, INFINITE_DISTANCE);
+
+	//	Restore
+
+	for (i = 0; i < GetTopologyNodeCount(); i++)
+		GetTopologyNode(i)->SetMarked(OldMarks.IsSet(i));
+
+	//	Done
+
+	return (iBestDist != INFINITE_DISTANCE ? iBestDist : -1);
+	}
+
+int CTopology::GetDistanceNoMatch (const CTopologyNode *pSrc, const CTopologyNode::SAttributeCriteria &Criteria) const
+
+//	GetDistanceNoMatch
+//
+//	Returns the shortest distance between pSrc and any node that DOES NOT matches 
+//	the given criteria. If no matching nodes are found, then we return -1.
+
+	{
+	int i;
+
+	if (GetTopologyNodeCount() < 2)
+		return -1;
+
+	//	We mark nodes to track our progress, so we have to save the
+	//	previous value of the marks.
+	//
+	//	We also initialize the calculated distance to either UNKNOWN_DISTANCE
+	//	or 0, depending on whether we match.
+
+	CLargeSet OldMarks;
+	for (i = 0; i < GetTopologyNodeCount(); i++)
+		{
+		CTopologyNode *pNode = GetTopologyNode(i);
+		if (pNode->IsMarked())
+			OldMarks.Set(i);
+
+		pNode->SetMarked(false);
+		if (pNode->MatchesAttributeCriteria(Criteria))
+			pNode->SetCalcDistance(UNKNOWN_DISTANCE);
+		else
+			pNode->SetCalcDistance(0);
+		}
+
+	//	Loop over all gates and recurse
+
+	int iBestDist = GetDistance(pSrc, INFINITE_DISTANCE);
+
+	//	Restore
+
+	for (i = 0; i < GetTopologyNodeCount(); i++)
+		GetTopologyNode(i)->SetMarked(OldMarks.IsSet(i));
+
+	//	Done
+
+	return (iBestDist != INFINITE_DISTANCE ? iBestDist : -1);
+	}
+
 int CTopology::GetDistance (const CString &sSourceID, const CString &sDestID) const
 
 //	GetDistance
@@ -1563,6 +1657,46 @@ void CTopology::ReadFromStream (SUniverseLoadCtx &Ctx)
 		}
 	}
 
+ALERROR CTopology::RunProcessors (CSystemMap *pMap, const TSortMap<int, TArray<ITopologyProcessor *>> &Processors, CTopologyNodeList &Nodes, CString *retsError)
+
+//	RunProcessors
+//
+//	Run topology processors on topology.
+
+	{
+	ALERROR error;
+
+	ASSERT(pMap);
+	ITopologyProcessor::SProcessCtx Ctx(*this, pMap);
+
+	//	Apply any topology processors (in order) on all the newly added nodes
+
+	for (int i = 0; i < Processors.GetCount(); i++)
+		{
+		const TArray<ITopologyProcessor *> &List = Processors[i];
+
+		for (int j = 0; j < List.GetCount(); j++)
+			{
+			//	Make a copy of the node list because each call will destroy it
+
+			CTopologyNodeList NodeList = Nodes;
+
+			//	Process
+
+			CString sError;
+			if (error = List[j]->Process(Ctx, NodeList, &sError))
+				{
+				*retsError = strPatternSubst(CONSTLIT("SystemMap (%x): %s"), pMap->GetUNID(), sError);
+				return error;
+				}
+			}
+		}
+
+	//	Success
+
+	return NOERROR;
+	}
+
 //	Initialize Topology
 
 ALERROR CUniverse::InitTopology (DWORD dwStartingMap, CString *retsError)
@@ -1605,6 +1739,7 @@ ALERROR CUniverse::InitTopology (DWORD dwStartingMap, CString *retsError)
 	TSortMap<DWORD, CTopologyNodeList> NodesAdded;
 	TArray<CSystemMap *> PrimaryMaps;
 	TArray<CSystemMap *> SecondaryMaps;
+	TSortMap<CSystemMap *, TSortMap<int, TArray<ITopologyProcessor *>>> Processors;
 
 	//	Let the maps add their topologies
 
@@ -1620,7 +1755,7 @@ ALERROR CUniverse::InitTopology (DWORD dwStartingMap, CString *retsError)
 
 		//	Add topology
 
-		if (error = pMap->AddFixedTopology(m_Topology, NodesAdded, retsError))
+		if (error = pMap->GenerateTopology(m_Topology, NodesAdded, retsError))
 			return error;
 
 		//	Keep track of primary vs. secondary maps
@@ -1629,43 +1764,30 @@ ALERROR CUniverse::InitTopology (DWORD dwStartingMap, CString *retsError)
 			PrimaryMaps.Insert(pMap);
 		else
 			SecondaryMaps.Insert(pMap);
+
+		//	Get the list of topology processors from this map (but store the
+		//	processors with the primary map).
+
+		auto pEntry = Processors.SetAt(pMap->GetDisplayMap());
+		pMap->AccumulateTopologyProcessors(*pEntry);
 		}
 
-	//	Run all primary map topology processors. We guarantee that the topology 
-	//	processors of a primary map will run before any secondary ones.
+	//	Now loop over all primary maps with processors and execute from lowest
+	//	priority to highest priority.
 
-	for (i = 0; i < PrimaryMaps.GetCount(); i++)
+	for (i = 0; i < Processors.GetCount(); i++)
 		{
-		CSystemMap *pMap = PrimaryMaps[i];
+		CSystemMap *pMap = Processors.GetKey(i);
 
-		//	Get the set of nodes that this map operates on.
+		//	Get the nodes for this map
 
 		CTopologyNodeList *pNodeList = NodesAdded.GetAt(pMap->GetUNID());
 		if (pNodeList == NULL || pNodeList->GetCount() == 0)
 			continue;
 
-		//	Process topology
+		//	Run all processors
 
-		if (error = pMap->ProcessTopology(m_Topology, pMap, *pNodeList, retsError))
-			return error;
-		}
-
-	//	Now run all secondary map topology processors
-
-	for (i = 0; i < SecondaryMaps.GetCount(); i++)
-		{
-		CSystemMap *pMap = SecondaryMaps[i];
-
-		//	Secondary maps operate on nodes in a primary map.
-
-		CSystemMap *pTargetMap = pMap->GetDisplayMap();
-		CTopologyNodeList *pNodeList = NodesAdded.GetAt(pTargetMap->GetUNID());
-		if (pNodeList == NULL || pNodeList->GetCount() == 0)
-			continue;
-
-		//	Process topology
-
-		if (error = pMap->ProcessTopology(m_Topology, pTargetMap, *pNodeList, retsError))
+		if (error = m_Topology.RunProcessors(pMap, Processors[i], *pNodeList, retsError))
 			return error;
 		}
 

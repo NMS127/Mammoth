@@ -179,6 +179,19 @@ ALERROR CSystem::AddTimedEvent (CSystemEvent *pEvent)
 	return NOERROR;
 	}
 
+void CSystem::AddToDeleteList (CSpaceObject *pObj)
+
+//	AddToDeleteList
+//
+//	Adds the object to a list to be deleted later.
+
+	{
+	ASSERT(pObj->IsDestroyed());
+	ASSERT(pObj->GetID() != 0xdddddddd);
+
+	m_DeletedObjects.FastAdd(pObj);
+	}
+
 ALERROR CSystem::AddToSystem (CSpaceObject *pObj, int *retiIndex)
 
 //	AddToSystem
@@ -511,40 +524,6 @@ int CSystem::CalcLocationWeight (CLocationDef *pLoc, const CAttributeCriteria &C
 	return iWeight;
 	}
 
-void CSystem::CalcObjGrid (SUpdateCtx &Ctx)
-
-//	CalcObjGrid
-//
-//	Loops over all objects and adds them to m_ObjGrid so we can do fast finds.
-
-	{
-	int i;
-
-	DebugStartTimer();
-	m_ObjGrid.DeleteAll();
-	for (i = 0; i < GetObjectCount(); i++)
-		{
-		CSpaceObject *pObj = GetObject(i);
-		if (pObj == NULL)
-			continue;
-
-		if (pObj->CanBeHit())
-			{
-			m_ObjGrid.AddObject(pObj);
-
-			//	If this is an object that can block ships, then we remember it
-			//	so that we can optimize systems without it.
-			//
-			//	LATER: We should implement this as a system variable that we
-			//	change in create/delete object.
-
-			if (pObj->BlocksShips())
-				Ctx.bHasShipBarriers = true;
-			}
-		}
-	DebugStopTimer("Adding objects to grid");
-	}
-
 CG32bitPixel CSystem::CalculateSpaceColor (CSpaceObject *pPOV, CSpaceObject **retpStar, const CG8bitSparseImage **retpVolumetricMask)
 
 //	CalculateSpaceColor
@@ -614,6 +593,7 @@ void CSystem::CalcViewportCtx (SViewportPaintCtx &Ctx, const RECT &rcView, CSpac
 	//	Debug options
 
 	Ctx.bShowBounds = g_pUniverse->GetDebugOptions().IsShowBoundsEnabled();
+	Ctx.bShowFacingsAngle = g_pUniverse->GetDebugOptions().IsShowFacingsAngleEnabled();
 
 	//	Figure out what color space should be. Space gets lighter as we get
 	//	near the central star
@@ -1277,6 +1257,11 @@ ALERROR CSystem::CreateShip (DWORD dwClassID,
 			&pShip))
 		return error;
 
+	//	If the ship destroyed itself, then we return NOT_FOUND
+
+	if (pShip->IsDestroyed())
+		return ERR_NOTFOUND;
+
 	//	If we're coming out of a gate, set the timer
 
 	if (pExitGate)
@@ -1544,8 +1529,8 @@ ALERROR CSystem::CreateWeaponFire (SShotCreateCtx &Ctx, CSpaceObject **retpShot)
 
 	switch (Ctx.pDesc->GetType())
 		{
-		case ftBeam:
-		case ftMissile:
+		case CWeaponFireDesc::ftBeam:
+		case CWeaponFireDesc::ftMissile:
 			{
 			CMissile *pMissile;
 
@@ -1555,7 +1540,7 @@ ALERROR CSystem::CreateWeaponFire (SShotCreateCtx &Ctx, CSpaceObject **retpShot)
 			break;
 			}
 
-		case ftContinuousBeam:
+		case CWeaponFireDesc::ftContinuousBeam:
 			{
 			CContinuousBeam *pBeam;
 
@@ -1565,7 +1550,7 @@ ALERROR CSystem::CreateWeaponFire (SShotCreateCtx &Ctx, CSpaceObject **retpShot)
 			break;
 			}
 
-		case ftArea:
+		case CWeaponFireDesc::ftArea:
 			{
 			CAreaDamage *pArea;
 
@@ -1575,7 +1560,7 @@ ALERROR CSystem::CreateWeaponFire (SShotCreateCtx &Ctx, CSpaceObject **retpShot)
 			break;
 			}
 
-		case ftParticles:
+		case CWeaponFireDesc::ftParticles:
 			{
 			CParticleDamage *pParticles;
 
@@ -1585,7 +1570,7 @@ ALERROR CSystem::CreateWeaponFire (SShotCreateCtx &Ctx, CSpaceObject **retpShot)
 			break;
 			}
 
-		case ftRadius:
+		case CWeaponFireDesc::ftRadius:
 			{
 			CRadiusDamage *pRadius;
 
@@ -1815,9 +1800,25 @@ bool CSystem::DescendObject (DWORD dwObjID, const CVector &vPos, CSpaceObject **
 	CSpaceObject *pObj = g_pUniverse->RemoveAscendedObj(dwObjID);
 	if (pObj == NULL)
 		{
-		if (retsError)
-			*retsError = CONSTLIT("Object not ascended.");
-		return false;
+		//	See if this object is already descended. Then we succeed.
+
+		pObj = g_pUniverse->FindObject(dwObjID);
+		if (pObj && pObj->GetSystem() == this && !pObj->IsAscended())
+			{
+			if (retpObj)
+				*retpObj = pObj;
+
+			return true;
+			}
+
+		//	Otherwise, failure
+
+		else
+			{
+			if (retsError)
+				*retsError = CONSTLIT("Object not ascended.");
+			return false;
+			}
 		}
 
 	pObj->SetAscended(false);
@@ -2107,9 +2108,13 @@ void CSystem::FlushDeletedObjects (void)
 //	Flush deleted objects from the deleted list.
 
 	{
-	int i;
+	//	Clear out the grid, so that it's not holding on to stale objects.
 
-	for (i = 0; i < m_DeletedObjects.GetCount(); i++)
+	m_ObjGrid.DeleteAll();
+
+	//	Flush objects deleted last tick
+
+	for (int i = 0; i < m_DeletedObjects.GetCount(); i++)
 		{
 		CSpaceObject *pObj = m_DeletedObjects.GetObj(i);
 		if (pObj->IsNamed())
@@ -2144,6 +2149,77 @@ CString CSystem::GetAttribsAtPos (const CVector &vPos)
 	{
 	CString sAttribs = (m_pTopology ? m_pTopology->GetAttributes() : NULL_STR);
 	return ::AppendModifiers(sAttribs, m_Territories.GetAttribsAtPos(vPos));
+	}
+
+void CSystem::GetDebugInfo (SDebugInfo &Info) const
+
+//	GetDebugInfo
+//
+//	Returns debug info when we crash. 
+
+	{
+	TArray<CSpaceObject *> Stars;
+
+	//	Loop over all objects
+
+	for (int i = 0; i < GetObjectCount(); i++)
+		{
+		CSpaceObject *pObj = GetObject(i);
+		if (pObj == NULL)
+			continue;
+
+		try
+			{
+			if (pObj->GetSystem() != this)
+				Info.iBadObjs++;
+			else if (pObj->IsDestroyed())
+				Info.iDestroyedObjs++;
+			else
+				{
+				Info.iTotalObjs++;
+				}
+
+			//	If this is a star, keep track.
+
+			if (pObj->GetScale() == scaleStar)
+				{
+				Info.iStarObjs++;
+				Stars.Insert(pObj);
+				}
+			}
+		catch (...)
+			{
+			//	Crashed accessing an object
+
+			Info.iBadObjs++;
+			}
+		}
+
+	//	Make sure our cached list of stars is OK.
+
+	for (int i = 0; i < m_Stars.GetCount(); i++)
+		{
+		try
+			{
+			CSpaceObject *pStar = m_Stars[i].pStarObj;
+			if (pStar == NULL)
+				Info.bBadStarCache = true;
+			else if (pStar->IsDestroyed())
+				Info.bBadStarCache = true;
+			else if (pStar->GetSystem() != this)
+				Info.bBadStarCache = true;
+			else if (!Stars.Find(pStar))
+				Info.bBadStarCache = true;
+			}
+		catch (...)
+			{
+			Info.bBadStarCache = true;
+			}
+		}
+
+	//	Deleted object list
+
+	Info.iDeletedObj += m_DeletedObjects.GetCount();
 	}
 
 int CSystem::GetEmptyLocationCount (void)
@@ -2653,9 +2729,13 @@ bool CSystem::IsExclusionZoneClear (const CVector &vPos, CStationType *pType)
 		{
 		CSpaceObject *pObj = GetObject(i);
 
-		//	Skip any non-structures
+		//	Skip any objects that cannot attack
 
-		if (pObj == NULL || pObj->GetScale() != scaleStructure)
+		if (pObj == NULL)
+			continue;
+
+		if (pObj->GetScale() != scaleStructure 
+				&& (pObj->GetScale() != scaleShip || pObj->GetEncounterInfo() == NULL))
 			continue;
 
 		//	Get the exclusion zone for this object (because it may exclude more
@@ -2687,7 +2767,13 @@ bool CSystem::IsExclusionZoneClear (const CVector &vPos, CStationType *pType)
 			{
 			rDist2 = (vPos - pObj->GetPos()).Length2();
 			if (rDist2 < Exclusion.rEnemyExclusionRadius2)
+				{
+#ifdef DEBUG_EXCLUSION_RADIUS
+				if (g_pUniverse->InDebugMode())
+					g_pUniverse->LogOutput(strPatternSubst(CONSTLIT("%s: %s too close to %s"), GetName(), pType->GetNounPhrase(), pObj->GetNounPhrase()));
+#endif
 				return false;
+				}
 			}
 
 		//	Otherwise, if we have an exclusion to all objects, check that 
@@ -2858,6 +2944,16 @@ CVector CSystem::OnJumpPosAdj (CSpaceObject *pObj, const CVector &vPos)
 	return vPos;
 	}
 
+void CSystem::OnStationDestroyed (SDestroyCtx &Ctx)
+
+//	OnStationDestroyed
+//
+//	A station has been abandoned.
+
+	{
+	m_TimedEvents.OnStationDestroyed(Ctx.pObj);
+	}
+
 void CSystem::PaintDestinationMarker (SViewportPaintCtx &Ctx, CG32bitImage &Dest, int x, int y, CSpaceObject *pObj)
 
 //	PaintDestinationMarker
@@ -3004,11 +3100,11 @@ void CSystem::PaintViewport (CG32bitImage &Dest,
 						|| (Ctx.bEnhancedDisplay
 							&& (pObj->GetScale() == scaleShip || pObj->GetScale() == scaleStructure)
 							&& pObj->PosInBox(Ctx.vEnhancedUR, Ctx.vEnhancedLL)
-							&& Perception.IsVisibleInLRS(Ctx.pCenter, pObj)
-							&& !pObj->IsHidden());
+							&& Perception.IsVisibleInLRS(Ctx.pCenter, pObj));
 
 				if (bMarker
-						&& (!bInViewport || !pObj->HitSizeInBox(Ctx.vUR, Ctx.vLL)))
+						&& !pObj->IsHidden()
+						&& (!bInViewport || !pObj->IsPartlyVisibleInBox(Ctx.vUR, Ctx.vLL)))
 					m_EnhancedDisplayObjs.FastAdd(pObj);
 				}
 			}
@@ -3524,6 +3620,14 @@ void CSystem::PaintViewportMap (CG32bitImage &Dest, const RECT &rcView, CSpaceOb
 	Ctx.Set3DMapEnabled(g_pUniverse->GetSFXOptions().Is3DSystemMapEnabled());
 	Ctx.SetSpaceBackgroundEnabled(g_pUniverse->GetSFXOptions().IsSpaceBackgroundEnabled());
 
+	//	In the future we should paint station images if the zoom level is greater
+	//	than a certain value. NOTE: We would need to improve the current scaling
+	//	algorithm, which is terrible for shrinking.
+
+#ifdef LATER
+	Ctx.SetPaintStationImagesEnabled(true);
+#endif
+
 	//	Make sure we've initialized the grid
 
 	if (m_GridPainter.IsEmpty())
@@ -3920,13 +4024,9 @@ void CSystem::RemoveObject (SDestroyCtx &Ctx)
 		DEBUG_RESTORE_PROGRAMSTATE;
 		}
 
-	//	Check to see if the object being destroyed was held by
-	//	a timed encounter
-
-	RemoveTimersForObj(Ctx.pObj);
-
 	//	Deal with event handlers
 
+	m_TimedEvents.OnObjDestroyed(Ctx.pObj);
 	m_EventHandlers.ObjDestroyed(Ctx.pObj);
 
 	//	If this is the player and we're resurrecting, then remove the player from
@@ -4008,23 +4108,6 @@ void CSystem::RemoveObject (SDestroyCtx &Ctx)
 #endif
 
 	DEBUG_CATCH
-	}
-
-void CSystem::RemoveTimersForObj (CSpaceObject *pObj)
-
-//	RemoveTimersForObj
-//
-//	Remove timers for the given object
-
-	{
-	int i;
-
-	for (i = 0; i < GetTimedEventCount(); i++)
-		{
-		CSystemEvent *pEvent = GetTimedEvent(i);
-		if (pEvent->OnObjDestroyed(pObj))
-			pEvent->SetDestroyed();
-		}
 	}
 
 void CSystem::RemoveVolumetricShadow (CSpaceObject *pObj)
@@ -4542,11 +4625,19 @@ void CSystem::Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnota
 //	Updates the system
 
 	{
+	DEBUG_TRY
+
 	int i;
 #ifdef DEBUG_PERFORMANCE
 	int iUpdateObj = 0;
 	int iMoveObj = 0;
 #endif
+
+	//	Delete all objects in the deleted list (we do this at the
+	//	beginning because we want to keep the list after the update
+	//	so that callers can examine it).
+
+	FlushDeletedObjects();
 
 	//	Set up context
 
@@ -4560,11 +4651,10 @@ void CSystem::Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnota
 
 	CalcAutoTarget(Ctx);
 
-	//	Delete all objects in the deleted list (we do this at the
-	//	beginning because we want to keep the list after the update
-	//	so that callers can examine it).
+	//	Add all objects to the grid so that we can do faster
+	//	hit tests
 
-	FlushDeletedObjects();
+	m_ObjGrid.Init(this, Ctx);
 
 	//	Fire timed events
 	//	NOTE: We only do this if we have a player because otherwise, some
@@ -4574,11 +4664,6 @@ void CSystem::Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnota
 	SetProgramState(psUpdatingEvents);
 	if (!IsTimeStopped() && (g_pUniverse->GetPlayerShip() || SystemCtx.bForceEventFiring))
 		m_TimedEvents.Update(m_iTick, this);
-
-	//	Add all objects to the grid so that we can do faster
-	//	hit tests
-
-	CalcObjGrid(Ctx);
 
 	//	If necessary, mark as painted so that objects update correctly.
 
@@ -4737,6 +4822,8 @@ void CSystem::Update (SSystemUpdateCtx &SystemCtx, SViewportAnnotations *pAnnota
 	//	Next
 
 	m_iTick++;
+
+	DEBUG_CATCH
 	}
 
 void CSystem::UpdateCollisionTesting (SUpdateCtx &Ctx)

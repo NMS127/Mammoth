@@ -149,7 +149,7 @@ ALERROR CLocateNodesProc::OnInitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc
 	return NOERROR;
 	}
 
-ALERROR CLocateNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CTopologyNodeList &NodeList, CString *retsError)
+ALERROR CLocateNodesProc::OnProcess (SProcessCtx &Ctx, CTopologyNodeList &NodeList, CString *retsError)
 
 //	OnProcess
 //
@@ -167,7 +167,7 @@ ALERROR CLocateNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CTop
 	//	If we have a criteria, the filter the nodes
 
 	CTopologyNodeList FilteredNodeList;
-	CTopologyNodeList *pNodeList = FilterNodes(Topology, m_Criteria, NodeList, FilteredNodeList);
+	CTopologyNodeList *pNodeList = FilterNodes(Ctx.Topology, m_Criteria, NodeList, FilteredNodeList);
 	if (pNodeList == NULL)
 		{
 		*retsError = CONSTLIT("Error filtering nodes");
@@ -244,15 +244,18 @@ ALERROR CLocateNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CTop
 		//	Process
 
 		if (LocationNodes.GetCount() > 0)
-			if (error = m_Locations[i].pProc->Process(pMap, Topology, LocationNodes, retsError))
+			if (error = m_Locations[i].pProc->Process(Ctx, LocationNodes, retsError))
 				return error;
 		}
 
 	//	Remove from the original node list
 
-	for (i = 0; i < pNodeList->GetCount(); i++)
-		if (!pNodeList->GetAt(i)->IsMarked())
-			NodeList.Delete(pNodeList->GetAt(i));
+	if (Ctx.bReduceNodeList)
+		{
+		for (i = 0; i < pNodeList->GetCount(); i++)
+			if (!pNodeList->GetAt(i)->IsMarked())
+				NodeList.Delete(pNodeList->GetAt(i));
+		}
 
 	//	Done
 

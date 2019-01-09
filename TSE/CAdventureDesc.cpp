@@ -11,6 +11,7 @@
 
 #define ADVENTURE_UNID_ATTRIB					CONSTLIT("adventureUNID")
 #define BACKGROUND_ID_ATTRIB					CONSTLIT("backgroundID")
+#define DEFAULT_CURRENCY_ATTRIB					CONSTLIT("defaultCurrency")
 #define DESC_ATTRIB								CONSTLIT("desc")
 #define INCLUDE_10_STARTING_CLASSES_ATTRIB		CONSTLIT("include10StartingShips")
 #define LEVEL_ATTRIB							CONSTLIT("level")
@@ -280,8 +281,6 @@ void CAdventureDesc::InitDefaultDamageAdj (void)
 
 	if (!g_bDamageAdjInit)
 		{
-		SDesignLoadCtx Ctx;
-
 		for (i = 1; i <= MAX_ITEM_LEVEL; i++)
 			{
 			g_ArmorDamageAdj[i - 1].InitFromArray(g_StdArmorDamageAdj[i - 1]);
@@ -387,6 +386,11 @@ ALERROR CAdventureDesc::OnBindDesign (SDesignLoadCtx &Ctx)
 //	Bind design elements
 
 	{
+	ALERROR error;
+
+	if (error = m_pDefaultCurrency.Bind(Ctx))
+		return error;
+
 	return NOERROR;
 	}
 
@@ -420,7 +424,7 @@ ALERROR CAdventureDesc::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc
 
 	m_sName = pDesc->GetAttribute(NAME_ATTRIB);
 	if (error = ::LoadUNID(Ctx, pDesc->GetAttribute(BACKGROUND_ID_ATTRIB), &m_dwBackgroundUNID))
-		return error;
+		return ComposeLoadError(Ctx, Ctx.sError);
 
 	//	Starting ship criteria
 
@@ -445,6 +449,10 @@ ALERROR CAdventureDesc::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc
 
 	if (!pDesc->FindAttribute(WELCOME_MESSAGE_ATTRIB, &m_sWelcomeMessage))
 		m_sWelcomeMessage = CONSTLIT("Welcome to Transcendence!");
+
+	//	Default currency
+
+	m_pDefaultCurrency.LoadUNID(pDesc->GetAttribute(DEFAULT_CURRENCY_ATTRIB));
 
 	//	Init some flags
 
@@ -485,31 +493,22 @@ ALERROR CAdventureDesc::OnCreateFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc
 				{
 				int iLevel = pItem->GetAttributeInteger(LEVEL_ATTRIB);
 				if (iLevel < 1 || iLevel > MAX_ITEM_LEVEL)
-					{
-					Ctx.sError = strPatternSubst(CONSTLIT("Invalid level: %d."), iLevel);
-					return ERR_FAIL;
-					}
+					return ComposeLoadError(Ctx, strPatternSubst(CONSTLIT("Invalid level: %d."), iLevel));
 
 				if (error = m_ArmorDamageAdj[iLevel - 1].InitFromXML(Ctx, pItem, true))
-					return error;
+					return ComposeLoadError(Ctx, Ctx.sError);
 				}
 			else if (strEquals(pItem->GetTag(), SHIELD_DAMAGE_ADJ_TAG))
 				{
 				int iLevel = pItem->GetAttributeInteger(LEVEL_ATTRIB);
 				if (iLevel < 1 || iLevel > MAX_ITEM_LEVEL)
-					{
-					Ctx.sError = strPatternSubst(CONSTLIT("Invalid level: %d."), iLevel);
-					return ERR_FAIL;
-					}
+					return ComposeLoadError(Ctx, strPatternSubst(CONSTLIT("Invalid level: %d."), iLevel));
 
 				if (error = m_ShieldDamageAdj[iLevel - 1].InitFromXML(Ctx, pItem, true))
-					return error;
+					return ComposeLoadError(Ctx, Ctx.sError);
 				}
 			else
-				{
-				Ctx.sError = strPatternSubst(CONSTLIT("Invalid constant definition element: %s."), pItem->GetTag());
-				return ERR_FAIL;
-				}
+				return ComposeLoadError(Ctx, strPatternSubst(CONSTLIT("Invalid constant definition element: %s."), pItem->GetTag()));
 			}
 		}
 

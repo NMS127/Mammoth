@@ -39,6 +39,7 @@
 #define PROPERTY_CAN_BE_DISABLED				CONSTLIT("canBeDisabled")
 #define PROPERTY_CAN_BE_DISRUPTED				CONSTLIT("canBeDisrupted")
 #define PROPERTY_CAPACITOR      				CONSTLIT("capacitor")
+#define PROPERTY_DEVICE_SLOTS					CONSTLIT("deviceSlots")
 #define PROPERTY_ENABLED						CONSTLIT("enabled")
 #define PROPERTY_EXTERNAL						CONSTLIT("external")
 #define PROPERTY_EXTRA_POWER_USE				CONSTLIT("extraPowerUse")
@@ -139,16 +140,10 @@ bool CDeviceClass::AccumulateEnhancements (CItemCtx &Device, CInstalledArmor *pT
 	{
 	bool bEnhanced = false;
 
-	CInstalledDevice *pDevice = Device.GetDevice();
-	CSpaceObject *pSource = Device.GetSource();
-
 	//	See if we can enhance the target device
 
-	if (pDevice == NULL 
-			|| (pDevice->IsEnabled() && !pDevice->IsDamaged()))
-		{
+	if (Device.IsDeviceWorking())
 		bEnhanced = m_Enhancements.Accumulate(Device, *pTarget->GetItem(), EnhancementIDs, pEnhancements);
-		}
 
 	//	Let sub-classes add their own
 
@@ -169,16 +164,10 @@ bool CDeviceClass::AccumulateEnhancements (CItemCtx &Device, CInstalledDevice *p
 	{
 	bool bEnhanced = false;
 
-	CInstalledDevice *pDevice = Device.GetDevice();
-	CSpaceObject *pSource = Device.GetSource();
-
 	//	See if we can enhance the target device
 
-	if (pDevice == NULL 
-			|| (pDevice->IsEnabled() && !pDevice->IsDamaged()))
-		{
+	if (Device.IsDeviceWorking())
 		bEnhanced = m_Enhancements.Accumulate(Device, *pTarget->GetItem(), EnhancementIDs, pEnhancements);
-		}
 
 	//	Let sub-classes add their own
 
@@ -202,7 +191,8 @@ bool CDeviceClass::AccumulatePerformance (CItemCtx &ItemCtx, SShipPerformanceCtx
 
 	//	If we install equipment, then add it.
 
-	Ctx.Abilities.Set(m_Equipment);
+	if (ItemCtx.IsDeviceWorking())
+		Ctx.Abilities.Set(m_Equipment);
 
     //  Let sub-classes handle it
 
@@ -488,6 +478,9 @@ ICCItem *CDeviceClass::FindItemProperty (CItemCtx &Ctx, const CString &sName)
         return CC.CreateInteger(iLevel);
         }
 
+    else if (strEquals(sName, PROPERTY_DEVICE_SLOTS))
+        return CC.CreateInteger(GetSlotsRequired());
+
     else if (strEquals(sName, PROPERTY_ENABLED))
         return (pDevice ? CC.CreateBool(pDevice->IsEnabled()) : CC.CreateNil());
 
@@ -708,12 +701,12 @@ CString CDeviceClass::GetReference (CItemCtx &Ctx, const CItem &Ammo, DWORD dwFl
 		//	Non-standard slots
 
 		if (GetSlotsRequired() != 1)
-			AppendReferenceString(&sReference, strPatternSubst(CONSTLIT("%d Slots"), GetSlotsRequired()));
+			AppendReferenceString(&sReference, strPatternSubst(CONSTLIT("%d slots"), GetSlotsRequired()));
 
 		//	External devices
 
 		if (IsExternal() || (pDevice && pDevice->IsExternal()))
-			AppendReferenceString(&sReference, CONSTLIT("External"));
+			AppendReferenceString(&sReference, CONSTLIT("external"));
 		}
 
 	//	Combine with our subclass
@@ -767,6 +760,9 @@ bool CDeviceClass::OnDestroyCheck (CItemCtx &ItemCtx, DestructionTypes iCause, c
 	CInstalledDevice *pDevice = ItemCtx.GetDevice();
 	if (pDevice == NULL || !pDevice->IsEnabled())
 		return true;
+
+	//	NOTE: We give damaged and disrupted devices a chance to handle this
+	//	event in case they want to do something special.
 
 	return ItemCtx.GetItem().FireOnDestroyCheck(ItemCtx, iCause, Attacker);
 	}

@@ -53,7 +53,9 @@ class CLanguage
 			numberNone,
 			numberError,
 
+			numberFireRate,					//	1.5 shots/sec
 			numberInteger,					//	1,000,000
+			numberMass,						//	500 kg or 1.5 tons
 			numberPower,					//	1.1 MW
 			numberReal,						//	100 or 10.0 or 1.0 or 0.00
 			numberRegenRate,				//	1.0 hp/sec
@@ -125,6 +127,7 @@ class CLanguageDataBlock
 		void DeleteAll (void);
 		inline int GetCount (void) const { return m_Data.GetCount(); }
 		SEntryDesc GetEntry (int iIndex) const;
+		inline bool HasEntry (const CString &sID) const { return (m_Data.GetAt(sID) != NULL); }
 		ALERROR InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc);
 		inline bool IsEmpty (void) const { return (m_Data.GetCount() == 0); }
 		void MergeFrom (const CLanguageDataBlock &Source);

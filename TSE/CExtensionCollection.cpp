@@ -31,8 +31,8 @@
 const int DIGEST_SIZE = 20;
 static BYTE g_BaseFileDigest[] =
 	{
-    252, 209,  59, 203, 218, 115,  44, 221, 242, 123,
-    200, 131, 105,  52, 104,  41,   3,  15,  44, 166,
+    26, 216, 116, 185, 221,  41,  23,  54, 134,   1,
+    66,  33, 250, 160, 132, 231,  24,   8, 204, 168,
 	};
 
 class CLibraryResolver : public IXMLParserController
@@ -243,7 +243,7 @@ ALERROR CExtensionCollection::AddToBindList (CExtension *pExtension, DWORD dwFla
 	//	If the extension is already disabled (probably because it is a later version)
 	//	then we exclude it.
 
-	if (pExtension->IsDisabled())
+	if (pExtension->IsDisabled() || m_DisabledExtensions.Find(pExtension->GetUNID()))
 		return NOERROR;
 
 	//	Create load options
@@ -324,8 +324,10 @@ ALERROR CExtensionCollection::AddToBindList (CExtension *pExtension, DWORD dwFla
 		{
 		retList->Insert(pExtension);
 
+#ifdef DEBUG_LOAD_EXTENSIONS
 		if (bDebugMode)
 			::kernelDebugLogPattern("Adding: %s.", pExtension->GetName());
+#endif
 		}
 
 	//	Success.
@@ -466,6 +468,11 @@ ALERROR CExtensionCollection::ComputeAvailableAdventures (DWORD dwFlags, TArray<
 		if (ExtensionList[0]->GetType() != extAdventure)
 			continue;
 
+		//	If manually disabled, then exclude
+
+		if (m_DisabledExtensions.Find(ExtensionList[0]->GetUNID()))
+			continue;
+
 		//	Out of all the releases, select the latest version.
 
 		CExtension *pBest = NULL;
@@ -540,6 +547,11 @@ ALERROR CExtensionCollection::ComputeAvailableExtensions (CExtension *pAdventure
 		//	releases, so we only need to check once).
 
 		if (ExtensionList[0]->GetType() != extExtension)
+			continue;
+
+		//	If this extension is disabled, then exclude it.
+
+		if (m_DisabledExtensions.Find(ExtensionList[0]->GetUNID()))
 			continue;
 
 		//	If this extension is not on our list, then skip it
@@ -666,8 +678,10 @@ ALERROR CExtensionCollection::ComputeBindOrder (CExtension *pAdventure,
 		CoreLibraries[i]->SetMarked();
 		retList->Insert(CoreLibraries[i]);
 
+#ifdef DEBUG_LOAD_EXTENSIONS
 		if (bDebugMode)
 			::kernelDebugLogPattern("Adding core library: %s", CoreLibraries[i]->GetName());
+#endif
 		}
 
 	//	Make a list of all compatibility libraries
@@ -815,6 +829,83 @@ void CExtensionCollection::ComputeCoreLibraries (CExtension *pExtension, TArray<
 		default:
 			ASSERT(false);
 		}
+	}
+
+bool CExtensionCollection::ComputeDownloads (const TArray<CMultiverseCatalogEntry> &Collection, TArray<CMultiverseCatalogEntry> &retNotFound)
+
+//	ComputeDownloads
+//
+//	Given the user's collection, looks for the extension on the local machine
+//	and sees if we need to download a new version. If so, we add it to the list.
+//	We return TRUE if we have to download at least one extension.
+
+	{
+	CSmartLock Lock(m_cs);
+
+	TSortMap<DWORD, bool> LibrariesChecked;
+
+	retNotFound.DeleteAll();
+
+	for (int i = 0; i < Collection.GetCount(); i++)
+		{
+		CMultiverseCatalogEntry &Entry = Collection[i];
+
+		//	Skip core entries
+
+		if (Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseCore)
+			continue;
+
+		//  Skip Steam UGC
+
+		if (Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseSteamUGC)
+			continue;
+
+		//	Steam versions don't need to be downloaded
+
+		if (Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseSteam)
+			continue;
+
+		//	If the user does not want to download the extension to this machine
+		//	then we skip.
+
+		if (m_DisabledExtensions.Find(Entry.GetUNID()))
+			continue;
+
+		//	If this is a library, and none of our other extensions need this library,
+		//	then we skip it.
+
+		if (Entry.GetType() == extLibrary
+				&& !IsLibraryInUse(Entry.GetUNID(), LibrariesChecked))
+			continue;
+
+		//	Look for this extension in our list. If we found it then compare
+		//	the signature to make sure that we have the right version.
+
+		CExtension *pExtension;
+		if (FindExtension(Entry.GetUNID(), Entry.GetRelease(), CExtension::folderCollection, &pExtension))
+			{
+			//	Compare the digests. If they match, then this is a registered
+			//	extension and we don't need to download.
+
+			if (Entry.GetTDBFileRef().GetDigest() == pExtension->GetDigest())
+				continue;
+
+			//	If this is an unregistered version, then for now we skip (because we
+			//	don't know how to download).
+
+			else if (!pExtension->IsRegistered()
+					&& strEquals(Entry.GetTDBFileRef().GetVersion(), pExtension->GetVersion()))
+				continue;
+			}
+
+		//	Otherwise, we need to download
+
+		retNotFound.Insert(Entry);
+		}
+
+	//	Done
+
+	return (retNotFound.GetCount() > 0);
 	}
 
 ALERROR CExtensionCollection::ComputeFilesToLoad (const CString &sFilespec, CExtension::EFolderTypes iFolder, TSortMap<CString, int> &List, CString *retsError)
@@ -1226,6 +1317,7 @@ bool CExtensionCollection::GetRequiredResources (TArray<CString> *retFilespecs)
 				|| pExtension->GetFolderType() != CExtension::folderCollection
 				|| pExtension->GetLoadState() != CExtension::loadComplete
 				|| pExtension->IsDisabled()
+				|| m_DisabledExtensions.Find(pExtension->GetUNID())
 				|| !pExtension->IsRegistrationVerified())
 			continue;
 
@@ -1283,6 +1375,68 @@ void CExtensionCollection::InitEntityResolver (CExtension *pExtension, DWORD dwF
 	retResolver->AddResolver(pExtension->GetEntities());
 	}
 
+bool CExtensionCollection::IsLibraryInUse (DWORD dwUNID, TSortMap<DWORD, bool> &LibrariesChecked) const
+
+//	IsLibraryIsUse
+//
+//	Returns TRUE if the given library is being used by some extension or 
+//	adventure.
+
+	{
+	CSmartLock Lock(m_cs);
+
+	//	If we've already checked this library, then we have an answer.
+
+	bool bNeedToInitialize;
+	bool *pInUse = LibrariesChecked.SetAt(dwUNID, &bNeedToInitialize);
+	if (!bNeedToInitialize)
+		return *pInUse;
+
+	//	Set value to FALSE in case we recurse.
+
+	*pInUse = false;
+
+	//	Otherwise, check all extensions.
+
+	bool bInUse = false;
+	for (int i = 0; i < m_Extensions.GetCount(); i++)
+		{
+		CExtension *pExtension = m_Extensions[i];
+
+		//	Skip ourselves
+
+		if (pExtension->GetUNID() == dwUNID)
+			continue;
+
+		//	Skip extensions that are not enabled.
+
+		if (m_DisabledExtensions.Find(pExtension->GetUNID()))
+			continue;
+
+		//	If this extension doesn't use this library, then nothing to do.
+
+		if (!pExtension->IsLibraryInUse(dwUNID))
+			continue;
+
+		//	If this is a library, then we need to recurse and see if the the
+		//	library we're interested in is used by this library.
+		//	If it is NOT used, then we can just skip it.
+
+		if (pExtension->GetType() == extLibrary
+				&& !IsLibraryInUse(pExtension->GetUNID(), LibrariesChecked))
+			continue;
+
+		//	If we get this far, then we know that the library is in use
+
+		*pInUse = true;
+		return true;
+		}
+
+	//	We've looped through all extensions and no one uses the library.
+
+	return false;
+	}
+
 bool CExtensionCollection::IsRegisteredGame (CExtension *pAdventure, const TArray<CExtension *> &DesiredExtensions, DWORD dwFlags)
 
 //	IsRegisteredGame
@@ -1312,7 +1466,7 @@ bool CExtensionCollection::IsRegisteredGame (CExtension *pAdventure, const TArra
 	return true;
 	}
 
-ALERROR CExtensionCollection::Load (const CString &sFilespec, DWORD dwFlags, CString *retsError)
+ALERROR CExtensionCollection::Load (const CString &sFilespec, const TSortMap<DWORD, bool> &DisabledExtensions, DWORD dwFlags, CString *retsError)
 
 //	Load
 //
@@ -1330,6 +1484,12 @@ ALERROR CExtensionCollection::Load (const CString &sFilespec, DWORD dwFlags, CSt
 		return NOERROR;
 
 	m_bLoadedInDebugMode = ((dwFlags & FLAG_DEBUG_MODE) == FLAG_DEBUG_MODE);
+	m_DisabledExtensions = DisabledExtensions;
+
+	//	Default adventure can never be disabled.
+
+	if (m_DisabledExtensions.Find(DEFAULT_ADVENTURE_EXTENSION_UNID))
+		m_DisabledExtensions.DeleteAt(DEFAULT_ADVENTURE_EXTENSION_UNID);
 
 	//	Load base file
 
@@ -1372,6 +1532,15 @@ ALERROR CExtensionCollection::Load (const CString &sFilespec, DWORD dwFlags, CSt
 		CExtension::SLoadOptions LoadOptions;
 		LoadOptions.bNoResources = ((dwFlags & FLAG_NO_RESOURCES) == FLAG_NO_RESOURCES);
 		LoadOptions.bNoDigestCheck = ((dwFlags & FLAG_NO_COLLECTION_CHECK) == FLAG_NO_COLLECTION_CHECK);
+
+		//	If this extension has been manually disabled, then don't bother with
+		//	the digest because it is expensive. We'll compute it later.
+
+		if (m_DisabledExtensions.Find(pExtension->GetUNID()))
+			LoadOptions.bNoDigestCheck = true;
+
+		//	Load the basic elements of the extension (we load the extension fully
+		//	only when we bind).
 
 		if (error = pExtension->Load(CExtension::loadAdventureDesc, 
 				&Resolver, 
@@ -1894,22 +2063,126 @@ bool CExtensionCollection::ReloadDisabledExtensions (DWORD dwFlags)
 	return bSuccess;
 	}
 
-void CExtensionCollection::SetRegisteredExtensions (const CMultiverseCollection &Collection, TArray<CMultiverseCatalogEntry *> *retNotFound)
+void CExtensionCollection::SetExtensionEnabled (DWORD dwUNID, bool bEnabled)
 
-//	SetRegisteredExtensions
+//	SetExtensionEnabled
 //
-//	Given the user's collection, set the registered bit on all appropriate
-//	extensions and return a list of extensions that need to be downloaded.
+//	Add or removes an extension from the disabled list.
+
+	{
+	if (bEnabled)
+		m_DisabledExtensions.DeleteAt(dwUNID);
+	else
+		{
+		//	Default adventure cannot be disabled.
+
+		if (dwUNID == DEFAULT_ADVENTURE_EXTENSION_UNID)
+			return;
+
+		//	Add to list.
+
+		m_DisabledExtensions.SetAt(dwUNID, true);
+		}
+	}
+
+void CExtensionCollection::SweepImages (void)
+
+//	SweepImages
+//
+//	Frees images that we're no longer using.
+
+	{
+	DEBUG_TRY
+
+	CSmartLock Lock(m_cs);
+	int i;
+
+	for (i = 0; i < m_Extensions.GetCount(); i++)
+		m_Extensions[i]->SweepImages();
+
+	DEBUG_CATCH
+	}
+
+void CExtensionCollection::UpdateCollectionStatus (TArray<CMultiverseCatalogEntry> &Collection, const SCollectionStatusOptions &Options)
+
+//	UpdateCollectionStatus
+//
+//	Updates the status of the entries in the given collection based on our list 
+//	of local extensions.
 
 	{
 	CSmartLock Lock(m_cs);
 	int i;
 
-	retNotFound->DeleteAll();
+	for (i = 0; i < Collection.GetCount(); i++)
+		{
+		CMultiverseCatalogEntry &Entry = Collection[i];
+		CExtension *pExtension;
+
+		//	Figure out which folder to look in
+
+		CExtension::EFolderTypes iFolder;
+        if (Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseCore)
+            iFolder = CExtension::folderBase;
+        else if (Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseSteamUGC)
+            iFolder = CExtension::folderExtensions;
+        else
+			iFolder = CExtension::folderCollection;
+
+		//	If this extension has been manually removed, then we mark it as 
+		//	such.
+
+		if (m_DisabledExtensions.Find(Entry.GetUNID()))
+			Entry.SetStatus(CMultiverseCatalogEntry::statusPlayerDisabled);
+
+		//	Look for this extension in our list.
+
+		else if (FindExtension(Entry.GetUNID(), 0, iFolder, &pExtension))
+			{
+			if (pExtension->IsDisabled())
+				Entry.SetStatus(CMultiverseCatalogEntry::statusError, pExtension->GetDisabledReason());
+			else if (pExtension->IsRegistrationVerified()
+                    || Entry.GetLicenseType() == CMultiverseCatalogEntry::licenseSteamUGC
+					|| !pExtension->IsRegistered())
+				Entry.SetStatus(CMultiverseCatalogEntry::statusLoaded);
+			else
+				Entry.SetStatus(CMultiverseCatalogEntry::statusCorrupt);
+
+			//	Set the icon
+
+			if (Entry.GetIcon() == NULL && pExtension->HasIcon())
+				{
+				CG32bitImage *pIcon;
+				pExtension->CreateIcon(Options.cxIconSize, Options.cyIconSize, &pIcon);
+				Entry.SetIcon(pIcon);
+				}
+
+			//	Set version
+
+			Entry.SetVersion(pExtension->GetVersion());
+			}
+
+		//	If we can't find it, then we know that it's not loaded
+
+		else
+			Entry.SetStatus(CMultiverseCatalogEntry::statusNotAvailable);
+		}
+	}
+
+void CExtensionCollection::UpdateRegistrationStatus (const TArray<CMultiverseCatalogEntry *> &Collection)
+
+//	UpdateRegistrationStatus
+//
+//	Given the user's collection, set the registered bit on all appropriate
+//	extensions.
+
+	{
+	CSmartLock Lock(m_cs);
+	int i;
 
 	for (i = 0; i < Collection.GetCount(); i++)
 		{
-		CMultiverseCatalogEntry *pEntry = Collection.GetEntry(i);
+		CMultiverseCatalogEntry *pEntry = Collection[i];
 
 		//	Skip core entries
 
@@ -1944,92 +2217,7 @@ void CExtensionCollection::SetRegisteredExtensions (const CMultiverseCollection 
 			else if (!pExtension->IsRegistered()
 					&& strEquals(pEntry->GetTDBFileRef().GetVersion(), pExtension->GetVersion()))
 				{ }
-			
-			//	Otherwise we assume that we have an old version and ask to download
-			//	the file again.
-
-			else
-				retNotFound->Insert(pEntry);
 			}
-
-		//	If we did not find the extension, then add it to the list of entries that
-		//	we need to download.
-
-		else
-			{
-			retNotFound->Insert(pEntry);
-			}
-		}
-	}
-
-void CExtensionCollection::SweepImages (void)
-
-//	SweepImages
-//
-//	Frees images that we're no longer using.
-
-	{
-	DEBUG_TRY
-
-	CSmartLock Lock(m_cs);
-	int i;
-
-	for (i = 0; i < m_Extensions.GetCount(); i++)
-		m_Extensions[i]->SweepImages();
-
-	DEBUG_CATCH
-	}
-
-void CExtensionCollection::UpdateCollectionStatus (CMultiverseCollection &Collection, int cxIconSize, int cyIconSize)
-
-//	UpdateCollectionStatus
-//
-//	Updates the local status of all entries in the collection
-
-	{
-	CSmartLock Lock(m_cs);
-	int i;
-
-	for (i = 0; i < Collection.GetCount(); i++)
-		{
-		CMultiverseCatalogEntry *pEntry = Collection.GetEntry(i);
-
-		//	Figure out which folder to look in
-
-		CExtension::EFolderTypes iFolder;
-        if (pEntry->GetLicenseType() == CMultiverseCatalogEntry::licenseCore)
-            iFolder = CExtension::folderBase;
-        else if (pEntry->GetLicenseType() == CMultiverseCatalogEntry::licenseSteamUGC)
-            iFolder = CExtension::folderExtensions;
-        else
-			iFolder = CExtension::folderCollection;
-
-		//	Look for this extension in our list.
-
-		CExtension *pExtension;
-		if (FindExtension(pEntry->GetUNID(), 0, iFolder, &pExtension))
-			{
-			if (pExtension->IsDisabled())
-				pEntry->SetStatus(CMultiverseCatalogEntry::statusError, pExtension->GetDisabledReason());
-			else if (pExtension->IsRegistrationVerified()
-                    || pEntry->GetLicenseType() == CMultiverseCatalogEntry::licenseSteamUGC
-					|| !pExtension->IsRegistered())
-				pEntry->SetStatus(CMultiverseCatalogEntry::statusLoaded);
-			else
-				pEntry->SetStatus(CMultiverseCatalogEntry::statusCorrupt);
-
-			//	Set the icon
-
-			CG32bitImage *pIcon;
-			pExtension->CreateIcon(cxIconSize, cyIconSize, &pIcon);
-			pEntry->SetIcon(pIcon);
-			pEntry->SetVersion(pExtension->GetVersion());
-			}
-
-		//	If we can't find it, then we know that it's not loaded
-
-		else
-			pEntry->SetStatus(CMultiverseCatalogEntry::statusNotAvailable);
 		}
 	}
 

@@ -59,7 +59,7 @@ ALERROR CDistributeNodesProc::OnInitFromXML (SDesignLoadCtx &Ctx, CXMLElement *p
 	return NOERROR;
 	}
 
-ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CTopologyNodeList &NodeList, CString *retsError)
+ALERROR CDistributeNodesProc::OnProcess (SProcessCtx &Ctx, CTopologyNodeList &NodeList, CString *retsError)
 
 //	OnProcess
 //
@@ -81,7 +81,7 @@ ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, 
 	//	If we have a criteria, the filter the nodes
 
 	CTopologyNodeList FilteredNodeList;
-	CTopologyNodeList *pNodeList = FilterNodes(Topology, m_Criteria, NodeList, FilteredNodeList);
+	CTopologyNodeList *pNodeList = FilterNodes(Ctx.Topology, m_Criteria, NodeList, FilteredNodeList);
 	if (pNodeList == NULL)
 		{
 		*retsError = CONSTLIT("Error filtering nodes");
@@ -105,7 +105,7 @@ ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, 
 
 		for (i = 0; i < iDistCount; i++)
 			{
-			if (error = pNodeList->GetAt(i)->InitFromAdditionalXML(Topology, m_Systems[i % iSystemCount].pDesc, retsError))
+			if (error = pNodeList->GetAt(i)->InitFromAdditionalXML(Ctx.Topology, m_Systems[i % iSystemCount].pDesc, retsError))
 				return error;
 
 			//	Remove this node from NodeList so that it is not re-used by our callers
@@ -144,7 +144,7 @@ ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, 
 			for (i = 0; i < iDistCount - 1; i++)
 				for (j = i + 1; j < iDistCount; j++)
 					{
-					int iDist = Topology.GetDistance(pNodeList->GetAt(Chosen[i])->GetID(), pNodeList->GetAt(Chosen[j])->GetID());
+					int iDist = Ctx.Topology.GetDistance(pNodeList->GetAt(Chosen[i])->GetID(), pNodeList->GetAt(Chosen[j])->GetID());
 					if (iDist > iMax)
 						iMax = iDist;
 					if (iDist < iMin)
@@ -186,7 +186,7 @@ ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, 
 
 		for (i = 0; i < iDistCount; i++)
 			{
-			if (error = pNodeList->GetAt(Best[i])->InitFromSystemXML(Topology, m_Systems[i % iSystemCount].pDesc, retsError))
+			if (error = pNodeList->GetAt(Best[i])->InitFromSystemXML(Ctx.Topology, m_Systems[i % iSystemCount].pDesc, retsError))
 				return error;
 
 			//	Remove this node from NodeList so that it is not re-used by our callers
@@ -197,8 +197,11 @@ ALERROR CDistributeNodesProc::OnProcess (CSystemMap *pMap, CTopology &Topology, 
 
 	//	Delete
 
-	for (i = 0; i < NodesToDelete.GetCount(); i++)
-		NodeList.Delete(NodesToDelete[i]);
+	if (Ctx.bReduceNodeList)
+		{
+		for (i = 0; i < NodesToDelete.GetCount(); i++)
+			NodeList.Delete(NodesToDelete[i]);
+		}
 
 	return NOERROR;
 	}

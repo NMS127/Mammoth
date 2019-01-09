@@ -8,11 +8,29 @@
 const int INFINITE_NODE_DIST =					1000000;
 const DWORD END_GAME_SYSTEM_UNID =				0x00ffffff;
 
+class ITopologyProcessor;
+
 class CTopologyNode
 	{
 	public:
 		struct SAttributeCriteria
 			{
+			inline CString AsString (void) const
+				{
+				CMemoryWriteStream Stream;
+				if (Stream.Create() != NOERROR)
+					return NULL_STR;
+
+				CAttributeCriteria::WriteAsString(Stream, AttribsRequired, CONSTLIT("+"));
+				CAttributeCriteria::WriteAsString(Stream, SpecialRequired, CONSTLIT("+"));
+				CAttributeCriteria::WriteAsString(Stream, AttribsNotAllowed, CONSTLIT("-"));
+				CAttributeCriteria::WriteAsString(Stream, SpecialNotAllowed, CONSTLIT("-"));
+
+				return CString(Stream.GetPointer(), Stream.GetLength());
+				}
+
+			inline bool IsEmpty (void) const { return (AttribsRequired.GetCount() == 0 && AttribsNotAllowed.GetCount() == 0 && SpecialRequired.GetCount() == 0 && SpecialNotAllowed.GetCount() == 0); }
+
 			TArray<CString> AttribsRequired;			//	Does not match if any of these attribs are missing
 			TArray<CString> AttribsNotAllowed;			//	Does not match if any of these attribs are present
 			TArray<CString> SpecialRequired;			//	Special attributes
@@ -427,13 +445,16 @@ class CTopology
 		CTopologyNode *FindTopologyNode (const CString &sID) const;
 		CString GenerateUniquePrefix (const CString &sPrefix, const CString &sTestNodeID);
 		int GetDistance (const CTopologyNode *pSrc, const CTopologyNode *pDest) const;
+		int GetDistance (const CTopologyNode *pSrc, const CTopologyNode::SAttributeCriteria &Criteria) const;
 		int GetDistance (const CString &sSourceID, const CString &sDestID) const;
+		int GetDistanceNoMatch (const CTopologyNode *pSrc, const CTopologyNode::SAttributeCriteria &Criteria) const;
 		inline CTopologyNodeList &GetTopologyNodeList (void) { return m_Topology; }
 		inline CTopologyNode *GetTopologyNode (int iIndex) const { return m_Topology.GetAt(iIndex); }
 		inline int GetTopologyNodeCount (void) const { return m_Topology.GetCount(); }
 		inline DWORD GetVersion (void) const { return m_dwVersion; }
 		ALERROR InitComplexArea (CXMLElement *pAreaDef, int iMinRadius, CComplexArea *retArea, STopologyCreateCtx *pCtx = NULL, CTopologyNode **iopExit = NULL); 
 		void ReadFromStream (SUniverseLoadCtx &Ctx);
+		ALERROR RunProcessors (CSystemMap *pMap, const TSortMap<int, TArray<ITopologyProcessor *>> &Processors, CTopologyNodeList &Nodes, CString *retsError);
 
 	private:
 		enum NodeTypes

@@ -107,6 +107,8 @@ void CWeaponHUDDefault::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx 
 //	Paint
 
 	{
+	DEBUG_TRY
+
 	if (m_bInvalid)
 		{
 		Realize(Ctx);
@@ -121,6 +123,8 @@ void CWeaponHUDDefault::OnPaint (CG32bitImage &Dest, int x, int y, SHUDPaintCtx 
 			m_Buffer,
 			x,
 			y);
+
+	DEBUG_CATCH
 	}
 
 void CWeaponHUDDefault::PaintDeviceStatus (CShip *pShip, DeviceNames iDev, int x, int y)
@@ -184,7 +188,7 @@ void CWeaponHUDDefault::PaintDeviceStatus (CShip *pShip, DeviceNames iDev, int x
 		//	Figure out what color to use
 
 		CG32bitPixel rgbColor;
-		if (pDevice->IsEnabled() && !pDevice->IsDamaged() && !pDevice->IsDisrupted())
+		if (pDevice->IsWorking())
 			rgbColor = VI.GetColor(colorTextHighlight);
 		else
 			rgbColor = DISABLED_LABEL_COLOR;

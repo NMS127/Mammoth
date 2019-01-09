@@ -7,7 +7,10 @@
 
 #define CRITERIA_TAG							CONSTLIT("Criteria")
 #define ENCOUNTER_TAG							CONSTLIT("Encounter")
+#define SYSTEM_CRITERIA_TAG						CONSTLIT("SystemCriteria")
 
+#define DISTANCE_CRITERIA_ATTRIB				CONSTLIT("distanceCriteria")
+#define DISTANCE_FREQUENCY_ATTRIB				CONSTLIT("distanceFrequency")
 #define ENEMY_EXCLUSION_RADIUS_ATTRIB			CONSTLIT("enemyExclusionRadius")
 #define EXCLUSION_RADIUS_ATTRIB					CONSTLIT("exclusionRadius")
 #define LEVEL_FREQUENCY_ATTRIB					CONSTLIT("levelFrequency")
@@ -16,6 +19,7 @@
 #define MAX_IN_SYSTEM_ATTRIB					CONSTLIT("maxInSystem")
 #define MIN_APPEARING_ATTRIB					CONSTLIT("minAppearing")
 #define NUMBER_APPEARING_ATTRIB					CONSTLIT("numberAppearing")
+#define SYSTEM_AFFINITY_ATTRIB					CONSTLIT("systemAffinity")
 #define SYSTEM_CRITERIA_ATTRIB					CONSTLIT("systemCriteria")
 #define UNIQUE_ATTRIB							CONSTLIT("unique")
 
@@ -26,6 +30,21 @@
 #define VALUE_TRUE								CONSTLIT("true")
 
 const Metric DEFAULT_ENEMY_EXCLUSION =			50.0 * LIGHT_SECOND;
+
+int CStationEncounterDesc::CalcAffinity (CTopologyNode *pNode) const
+
+//	CalcAffinity
+//
+//	Calculates the affinity for the given node. We return values between
+//	ftCommon and 0.
+
+	{
+	if (m_SystemAffinity.MatchesAll())
+		return ftCommon;
+
+	int iWeight = m_SystemAffinity.CalcNodeWeight(pNode);
+	return (ftCommon * iWeight / 1000);
+	}
 
 int CStationEncounterDesc::CalcLevelFromFrequency (void) const
 
@@ -116,6 +135,33 @@ void CStationEncounterDesc::GetExclusionDesc (SExclusionDesc &Exclusion) const
 	Exclusion.bHasEnemyExclusion = (m_rEnemyExclusionRadius > m_rExclusionRadius);
 	}
 
+int CStationEncounterDesc::GetFrequencyByDistance (int iDistance) const
+
+//	GetFrequencyByDistance
+//
+//	Returns the frequency of the encounter based on the distance to m_sDistanceCriteria.
+//	Distances >= 1 mean that we are that many nodes away from a node that matches
+//	m_sDistanceCriteria. Distances <= -1 mean that we are that many nodes away from
+//	a node that DOES NOT match m_sDistanceCriteria.
+//
+//	m_sDistanceFrequency must have two sets of five elements:
+//
+//	               54321 12345
+//                 \___/ \___/
+//                   |     |
+//	Negative distances     Positive distances
+
+	{
+	if (iDistance < -5)
+		return ::GetFrequencyByLevel(m_sDistanceFrequency, 1);
+	else if (iDistance < 0)
+		return ::GetFrequencyByLevel(m_sDistanceFrequency, iDistance + 6);
+	else if (iDistance > 5)
+		return ftNotRandom;
+	else
+		return ::GetFrequencyByLevel(m_sDistanceFrequency, iDistance + 5);
+	}
+
 int CStationEncounterDesc::GetFrequencyByLevel (int iLevel) const
 
 //	GetFrequencyByLevel
@@ -195,7 +241,10 @@ bool CStationEncounterDesc::InitAsOverride (const CStationEncounterDesc &Origina
 
 	//	System criteria
 
-	CXMLElement *pCriteria = Override.GetContentElementByTag(CRITERIA_TAG);
+	CXMLElement *pCriteria = Override.GetContentElementByTag(SYSTEM_CRITERIA_TAG);
+	if (pCriteria == NULL)
+		pCriteria = Override.GetContentElementByTag(CRITERIA_TAG);
+
 	if (pCriteria)
 		{
 		if (CTopologyNode::ParseCriteria(pCriteria, &m_SystemCriteria, retsError) != NOERROR)
@@ -213,11 +262,26 @@ bool CStationEncounterDesc::InitAsOverride (const CStationEncounterDesc &Origina
 
 	//	Level frequency and criteria
 
+	if (Override.FindAttribute(DISTANCE_CRITERIA_ATTRIB, &sAttrib))
+		{
+		if (CTopologyNode::ParseAttributeCriteria(sAttrib, &m_DistanceCriteria) != NOERROR)
+			return false;
+		}
+
+	if (Override.FindAttribute(DISTANCE_FREQUENCY_ATTRIB, &sAttrib))
+		m_sDistanceFrequency = sAttrib;
+
 	if (Override.FindAttribute(LEVEL_FREQUENCY_ATTRIB, &sAttrib))
 		m_sLevelFrequency = sAttrib;
 
 	if (Override.FindAttribute(LOCATION_CRITERIA_ATTRIB, &sAttrib))
 		m_sLocationCriteria = sAttrib;
+
+	if (Override.FindAttribute(SYSTEM_AFFINITY_ATTRIB, &sAttrib))
+		{
+		if (m_SystemAffinity.Parse(sAttrib, 0, retsError) != NOERROR)
+			return false;
+		}
 
 	//	Exclusion radius
 
@@ -325,7 +389,10 @@ ALERROR CStationEncounterDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pD
 
 	//	System criteria
 
-	CXMLElement *pCriteria = pDesc->GetContentElementByTag(CRITERIA_TAG);
+	CXMLElement *pCriteria = pDesc->GetContentElementByTag(SYSTEM_CRITERIA_TAG);
+	if (pCriteria == NULL)
+		pCriteria = pDesc->GetContentElementByTag(CRITERIA_TAG);
+
 	if (pCriteria)
 		{
 		if (error = CTopologyNode::ParseCriteria(pCriteria, &m_SystemCriteria, &Ctx.sError))
@@ -343,8 +410,18 @@ ALERROR CStationEncounterDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pD
 
 	//	Level frequency and criteria
 
+	if (error = CTopologyNode::ParseAttributeCriteria(pDesc->GetAttribute(DISTANCE_CRITERIA_ATTRIB), &m_DistanceCriteria))
+		return error;
+
+	m_sDistanceFrequency = pDesc->GetAttribute(DISTANCE_FREQUENCY_ATTRIB);
 	m_sLevelFrequency = pDesc->GetAttribute(LEVEL_FREQUENCY_ATTRIB);
 	m_sLocationCriteria = pDesc->GetAttribute(LOCATION_CRITERIA_ATTRIB);
+
+	if (pDesc->FindAttribute(SYSTEM_AFFINITY_ATTRIB, &sAttrib))
+		{
+		if (error = m_SystemAffinity.Parse(sAttrib, 0, &Ctx.sError))
+			return error;
+		}
 
 	//	Exclusion radius
 

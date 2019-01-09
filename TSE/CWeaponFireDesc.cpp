@@ -34,10 +34,13 @@
 #define FIRE_RATE_ATTRIB						CONSTLIT("fireRate")
 #define FRAGMENT_COUNT_ATTRIB					CONSTLIT("fragmentCount")
 #define FRAGMENT_INTERVAL_ATTRIB				CONSTLIT("fragmentInterval")
+#define FRAGMENT_MAX_RADIUS_ATTRIB				CONSTLIT("fragmentMaxRadius")
+#define FRAGMENT_MIN_RADIUS_ATTRIB				CONSTLIT("fragmentMinRadius")
 #define FRAGMENT_RADIUS_ATTRIB					CONSTLIT("fragmentRadius")
 #define FRAGMENT_TARGET_ATTRIB					CONSTLIT("fragmentTarget")
 #define HIT_EFFECT_ATTRIB						CONSTLIT("hitEffect")
 #define HIT_POINTS_ATTRIB						CONSTLIT("hitPoints")
+#define IDLE_POWER_USE_ATTRIB					CONSTLIT("idlePowerUse")
 #define INITIAL_DELAY_ATTRIB					CONSTLIT("initialDelay")
 #define INTERACTION_ATTRIB						CONSTLIT("interaction")
 #define EXHAUST_LIFETIME_ATTRIB					CONSTLIT("lifetime")
@@ -63,6 +66,7 @@
 #define PARTICLE_SPREAD_ANGLE_ATTRIB			CONSTLIT("particleSpreadAngle")
 #define PARTICLE_SPREAD_WIDTH_ATTRIB			CONSTLIT("particleSpreadWidth")
 #define PASSTHROUGH_ATTRIB						CONSTLIT("passthrough")
+#define POWER_USE_ATTRIB						CONSTLIT("powerUse")
 #define RELATIVISTIC_SPEED_ATTRIB				CONSTLIT("relativisticSpeed")
 #define BEAM_CONTINUOUS_ATTRIB					CONSTLIT("repeating")
 #define CONTINUOUS_FIRE_DELAY_ATTRIB			CONSTLIT("repeatingDelay")
@@ -118,12 +122,7 @@ static char *CACHED_EVENTS[CWeaponFireDesc::evtCount] =
 		"OnFragment",
 	};
 
-CWeaponFireDesc::CWeaponFireDesc (void) : 
-		m_pExtension(NULL),
-		m_pParticleDesc(NULL),
-        m_pFirstFragment(NULL),
-        m_pOldEffects(NULL),
-        m_pScalable(NULL)
+CWeaponFireDesc::CWeaponFireDesc (void)
 
 //	CWeaponFireDesc constructor
 
@@ -1167,6 +1166,7 @@ void CWeaponFireDesc::FireOnDestroyObj (const SDestroyCtx &Ctx)
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
 		CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
 		CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+		CCCtx.DefineBool(CONSTLIT("aDestroy"), Ctx.WasDestroyed());
 		CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
 
 		CCCtx.DefineItemType(CONSTLIT("aWeaponType"), GetWeaponType());
@@ -1621,7 +1621,8 @@ void CWeaponFireDesc::InitFromDamage (const DamageDesc &Damage)
 	m_pFirstFragment = NULL;
 	m_fProximityBlast = false;
 	m_iProximityFailsafe = 0;
-	m_rFragThreshold = LIGHT_SECOND * DEFAULT_FRAG_THRESHOLD;
+	m_rMaxFragThreshold = LIGHT_SECOND * DEFAULT_FRAG_THRESHOLD;
+	m_rMinFragThreshold = 0.0;
 	m_FragInterval.SetConstant(0);
 
 	//	Effects
@@ -1724,6 +1725,11 @@ ALERROR CWeaponFireDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, c
 		m_iFireRate = -1;
 	else
 		m_iFireRate = (int)((iFireRateSecs / STD_SECONDS_PER_UPDATE) + 0.5);
+
+	//	Power use
+
+	m_iPowerUse = pDesc->GetAttributeIntegerBounded(POWER_USE_ATTRIB, 0, -1, -1);
+	m_iIdlePowerUse = pDesc->GetAttributeIntegerBounded(IDLE_POWER_USE_ATTRIB, 0, -1, (m_iPowerUse == -1 ? -1 : m_iPowerUse / 10));
 
 	//	Hit criteria
 
@@ -2122,7 +2128,8 @@ ALERROR CWeaponFireDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, c
 
 	m_fProximityBlast = (iFragCount != 0);
 	m_iProximityFailsafe = pDesc->GetAttributeInteger(FAILSAFE_ATTRIB);
-	m_rFragThreshold = LIGHT_SECOND * pDesc->GetAttributeDoubleBounded(FRAGMENT_RADIUS_ATTRIB, 0.0, -1.0, DEFAULT_FRAG_THRESHOLD);
+	m_rMaxFragThreshold = LIGHT_SECOND * DEFAULT_FRAG_THRESHOLD;
+	m_rMinFragThreshold = 0.5 * LIGHT_SECOND * DEFAULT_FRAG_THRESHOLD;
 
 	//	If we've got a fragment interval set, then it means we periodically 
 	//	fragment (instead of fragmenting on proximity).
@@ -2138,6 +2145,24 @@ ALERROR CWeaponFireDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, c
 		//	Clear proximity blast flag.
 
 		m_fProximityBlast = false;
+		}
+
+	//	See if we have custom fragmentation thresholds
+
+	else
+		{
+		Metric rValue;
+
+		if (pDesc->FindAttributeDouble(FRAGMENT_MAX_RADIUS_ATTRIB, &rValue)
+				|| pDesc->FindAttributeDouble(FRAGMENT_RADIUS_ATTRIB, &rValue))
+			{
+			m_rMaxFragThreshold = LIGHT_SECOND * Max(0.0, rValue);
+
+			if (pDesc->FindAttributeDouble(FRAGMENT_MIN_RADIUS_ATTRIB, &rValue))
+				m_rMinFragThreshold = Min(LIGHT_SECOND * Max(0.0, rValue), m_rMaxFragThreshold);
+			else
+				m_rMinFragThreshold = 0.5 * m_rMaxFragThreshold;
+			}
 		}
 
 	//	Compute max effective range
@@ -2200,7 +2225,7 @@ ALERROR CWeaponFireDesc::InitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDesc, c
 	return NOERROR;
 	}
 
-ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CItemType *pItem)
+ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CItemType *pItem, CWeaponClass *pWeapon)
 
 //  InitScaledStats
 //
@@ -2230,7 +2255,7 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
         CWeaponFireDesc &ScaledDesc = m_pScalable[i];
         int iScaledLevel = m_iBaseLevel + i + 1;
 
-        if (error = ScaledDesc.InitScaledStats(Ctx, pDesc, pItem, *this, m_iBaseLevel, iScaledLevel))
+        if (error = ScaledDesc.InitScaledStats(Ctx, pDesc, pWeapon, *this, m_iBaseLevel, iScaledLevel))
             return error;
         }
 
@@ -2239,7 +2264,7 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
     return NOERROR;
     }
 
-ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CItemType *pItem, const CWeaponFireDesc &Src, int iBaseLevel, int iScaledLevel)
+ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDesc, CWeaponClass *pWeapon, const CWeaponFireDesc &Src, int iBaseLevel, int iScaledLevel)
 
 //  InitScaledStats
 //
@@ -2247,7 +2272,9 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
 
     {
     ALERROR error;
-    int i;
+
+	const CWeaponClass::SStdStats &Base = CWeaponClass::GetStdStats(iBaseLevel);
+	const CWeaponClass::SStdStats &Scaled = CWeaponClass::GetStdStats(iScaledLevel);
 
     //  Set the level
 
@@ -2257,9 +2284,16 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
     //  We start by figuring out the percent increase in damage at the scaled
     //  level, relative to base.
 
-    Metric rAdj = (Metric)CWeaponClass::GetStdDamage(iScaledLevel) / CWeaponClass::GetStdDamage(iBaseLevel);
+    Metric rAdj = (Metric)Scaled.iDamage / Base.iDamage;
     m_Damage = Src.m_Damage;
     m_Damage.ScaleDamage(rAdj);
+
+	//	Power scales proportionally
+
+	rAdj = (Metric)Scaled.iPower / Base.iPower;
+	int iBasePowerUse = pWeapon->GetPowerRating(CItemCtx());
+	m_iPowerUse = mathRound(iBasePowerUse * rAdj);
+	m_iIdlePowerUse = mathRound(pWeapon->GetIdlePowerUse() * rAdj);
 
     //  These stats never scale, so we just copy them
 
@@ -2327,7 +2361,7 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
 	SFragmentDesc *pLastFragment = NULL;
 	int iFragCount = 0;
     SFragmentDesc *pSrcFragment = Src.m_pFirstFragment;
-	for (i = 0; i < pDesc->GetContentElementCount() && pSrcFragment; i++, pSrcFragment = pSrcFragment->pNext)
+	for (int i = 0; i < pDesc->GetContentElementCount() && pSrcFragment; i++, pSrcFragment = pSrcFragment->pNext)
 		{
 		CXMLElement *pFragDesc = pDesc->GetContentElement(i);
 		if (!strEquals(FRAGMENT_TAG, pFragDesc->GetTag()))
@@ -2347,7 +2381,7 @@ ALERROR CWeaponFireDesc::InitScaledStats (SDesignLoadCtx &Ctx, CXMLElement *pDes
 		//	Load fragment data
 
 		pNewDesc->pDesc = new CWeaponFireDesc;
-		if (error = pNewDesc->pDesc->InitScaledStats(Ctx, pFragDesc, pItem, *pSrcFragment->pDesc, iBaseLevel, iScaledLevel))
+		if (error = pNewDesc->pDesc->InitScaledStats(Ctx, pFragDesc, pWeapon, *pSrcFragment->pDesc, iBaseLevel, iScaledLevel))
 			return error;
 
 		//	Set the fragment count

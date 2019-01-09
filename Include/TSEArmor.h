@@ -27,6 +27,13 @@ class CArmorClass
 			evtCount					= 3,
 			};
 
+		struct SMassClassDesc
+			{
+			char *pszID;
+			char *pszName;
+			int iMaxMassKg;
+			};
+
 		struct SBalance
 			{
 			SBalance (void) :
@@ -104,7 +111,8 @@ class CArmorClass
 		int GetDamageAdjForWeaponLevel (int iLevel);
 		int GetDamageEffectiveness (CSpaceObject *pAttacker, CInstalledDevice *pWeapon);
 		inline int GetInstallCost (CItemCtx &Ctx) const;
-		inline CItemType *GetItemType (void) { return m_pItemType; }
+		inline CItemType *GetItemType (void) const { return m_pItemType; }
+		const CString &GetMassClass (CItemCtx &ItemCtx) const;
 		int GetMaxHP (CItemCtx &ItemCtx, bool bForceComplete = false) const;
 		inline int GetMaxHPBonus (void) const { return m_iMaxHPBonus; }
 		inline CString GetName (void);
@@ -112,7 +120,7 @@ class CArmorClass
 		bool GetReferenceDamageAdj (const CItem *pItem, CSpaceObject *pInstalled, int *retiHP, int *retArray);
 		bool GetReferenceSpeedBonus (CItemCtx &Ctx, int *retiSpeedBonus) const;
 		inline int GetRepairCost (CItemCtx &Ctx) const;
-		inline int GetRepairTech (void) { return m_iRepairTech; }
+		inline int GetRepairTech (void) const { return m_iRepairTech; }
         Metric GetScaledCostAdj (CItemCtx &ItemCtx) const;
 		CString GetShortName (void);
 		inline int GetStealth (void) const { return m_iStealth; }
@@ -169,6 +177,7 @@ class CArmorClass
 		Metric CalcBalanceRegen (CItemCtx &ItemCtx, const SScalableStats &Stats) const;
 		Metric CalcBalanceRepair (CItemCtx &ItemCtx, const SScalableStats &Stats) const;
 		Metric CalcBalanceSpecial (CItemCtx &ItemCtx, const SScalableStats &Stats) const;
+		Metric CalcRegen180 (CItemCtx &ItemCtx) const;
 		void GenerateScaledStats (void);
 		int GetDamageAdj (CItemCtx &ItemCtx, const DamageDesc &Damage) const;
         const SScalableStats &GetScaledStats (CItemCtx &ItemCtx) const;
@@ -195,6 +204,7 @@ class CArmorClass
 		CItemCriteria m_DeviceCriteria;			//	Only enhances devices that match criteria
 		int m_iDamageAdjLevel;					//	Level to use for intrinsic damage adj
 		DamageTypeSet m_Reflective;				//	Types of damage reflected
+		CString m_sMassClass;					//	Computed mass class (computed in Bind)
 
 		DWORD m_fPhotoRecharge:1;				//	TRUE if refuels when near a star
 		DWORD m_fShieldInterference:1;			//	TRUE if armor interferes with shields

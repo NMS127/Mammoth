@@ -169,12 +169,27 @@ bool CItemCtx::GetEnhancementDisplayAttributes (TArray<SDisplayAttribute> *retLi
 //	Returns FALSE if there are none.
 
 	{
-	const CItemEnhancementStack *pEnhancements = GetEnhancementStack();
-	if (pEnhancements == NULL || pEnhancements->IsEmpty())
-		return false;
+	//	Get attributes from the enhancement stack
 
-	pEnhancements->AccumulateAttributes(*this, retList);
-	return (retList->GetCount() > 0);
+	const CItemEnhancementStack *pEnhancements = GetEnhancementStack();
+	if (pEnhancements && !pEnhancements->IsEmpty())
+		{
+		pEnhancements->AccumulateAttributes(*this, retList);
+		return (retList->GetCount() > 0);
+		}
+
+	//	Otherwise, if the item is enhanced, then return that
+
+	else if (GetItem().IsEnhanced())
+		{
+		retList->Insert(SDisplayAttribute(attribPositive, CONSTLIT("+enhanced"), true));
+		return true;
+		}
+
+	//	Otherwise, not enhanced.
+
+	else
+		return false;
 	}
 
 TSharedPtr<CItemEnhancementStack> CItemCtx::GetEnhancementStack (void)
@@ -212,7 +227,7 @@ TSharedPtr<CItemEnhancementStack> CItemCtx::GetEnhancementStack (void)
 	return m_pEnhancements;
 	}
 
-const CItem &CItemCtx::GetItem(void)
+const CItem &CItemCtx::GetItem (void)
 
 //	GetItem
 //
@@ -302,7 +317,7 @@ const CItemEnhancement &CItemCtx::GetMods(void)
 	return GetItem().GetMods();
 	}
 
-CShipClass *CItemCtx::GetSourceShipClass (void) const
+const CShipClass *CItemCtx::GetSourceShipClass (void) const
 
 //	GetSourceShipClass
 //
@@ -310,13 +325,33 @@ CShipClass *CItemCtx::GetSourceShipClass (void) const
 
 	{
 	if (m_pSource == NULL)
-		return NULL;
+		return m_pSourceShipClass;
 
 	CShip *pShip = m_pSource->AsShip();
 	if (pShip == NULL)
 		return NULL;
 
 	return pShip->GetClass();
+	}
+
+bool CItemCtx::IsDeviceDamaged (void)
+
+//	IsDeviceDamaged
+//
+//	Returns TRUE if the device is damaged.
+
+	{
+	return (GetDevice() != NULL && GetDevice()->IsDamaged());
+	}
+
+bool CItemCtx::IsDeviceDisrupted (void)
+
+//	IsDeviceDisrupted
+//
+//	Returns TRUE if the device is disrupted.
+
+	{
+	return (GetDevice() != NULL && GetDevice()->IsDisrupted());
 	}
 
 bool CItemCtx::IsDeviceEnabled (void)
@@ -328,6 +363,17 @@ bool CItemCtx::IsDeviceEnabled (void)
     
     {
     return (GetDevice() == NULL || GetDevice()->IsEnabled());
+    }
+
+bool CItemCtx::IsDeviceWorking (void)
+
+//  IsDeviceWorking
+//
+//  Returns TRUE if the device is working.
+//  NOTE: If we don't have a CInstalledDevice, we alway treat as working.
+    
+    {
+    return (GetDevice() == NULL || GetDevice()->IsWorking());
     }
 
 bool CItemCtx::ResolveVariant (void)

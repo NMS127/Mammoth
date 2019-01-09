@@ -187,7 +187,7 @@ void COverlay::CalcOffset (int iScale, int iRotation, int *retxOffset, int *rety
 	{
 	//	Adjust position, if necessary
 
-	if (m_iPosRadius)
+	if (m_iPosRadius || m_iPosZ)
 		{
 		//	Do we rotate with the source?
 
@@ -197,7 +197,7 @@ void COverlay::CalcOffset (int iScale, int iRotation, int *retxOffset, int *rety
 
 		//	Adjust based on position
 
-		C3DConversion::CalcCoord(iScale, iRotationOrigin + m_iPosAngle, m_iPosRadius, 0, retxOffset, retyOffset);
+		C3DConversion::CalcCoord(iScale, iRotationOrigin + m_iPosAngle, m_iPosRadius, m_iPosZ, retxOffset, retyOffset);
 		}
 
 	//	Otherwise, we're at the center
@@ -258,6 +258,7 @@ void COverlay::CreateFromType (COverlayType *pType,
 								   int iPosAngle,
 								   int iPosRadius,
 								   int iRotation,
+								   int iPosZ,
 								   int iLifeLeft, 
 								   COverlay **retpField)
 
@@ -278,6 +279,7 @@ void COverlay::CreateFromType (COverlayType *pType,
 	pField->m_iPosAngle = iPosAngle;
 	pField->m_iPosRadius = iPosRadius;
 	pField->m_iRotation = iRotation;
+	pField->m_iPosZ = iPosZ;
 	pField->m_iPaintHit = 0;
 
 	//	Create painters
@@ -369,7 +371,7 @@ void COverlay::FireCustomEvent (CSpaceObject *pSource, const CString &sEvent, IC
 		*retpResult = g_pUniverse->GetCC().CreateNil();
 	}
 
-bool COverlay::FireGetDockScreen (CSpaceObject *pSource, CString *retsScreen, int *retiPriority, ICCItemPtr *retpData) const
+bool COverlay::FireGetDockScreen (CSpaceObject *pSource, CDockScreenSys::SSelector &Selector) const
 
 //	FireGetDockScreen
 //
@@ -392,7 +394,7 @@ bool COverlay::FireGetDockScreen (CSpaceObject *pSource, CString *retsScreen, in
 		return false;
 		}
 
-	return CTLispConvert::AsScreen(pResult, retsScreen, retpData, retiPriority);
+	return CTLispConvert::AsScreenSelector(pResult, &Selector);
 	}
 
 void COverlay::FireOnCreate (CSpaceObject *pSource)
@@ -528,6 +530,7 @@ void COverlay::FireOnObjDestroyed (CSpaceObject *pSource, const SDestroyCtx &Ctx
 		CCCtx.DefineSpaceObject(CONSTLIT("aDestroyer"), Ctx.Attacker.GetObj());
 		CCCtx.DefineSpaceObject(CONSTLIT("aOrderGiver"), Ctx.GetOrderGiver());
 		CCCtx.DefineSpaceObject(CONSTLIT("aWreckObj"), Ctx.pWreck);
+		CCCtx.DefineBool(CONSTLIT("aDestroy"), Ctx.WasDestroyed());
 		CCCtx.DefineString(CONSTLIT("aDestroyReason"), GetDestructionName(Ctx.iCause));
 
 		//	Execute
@@ -933,6 +936,7 @@ void COverlay::ReadFromStream (SLoadCtx &Ctx)
 //	DWORD	m_iPosAngle
 //	DWORD	m_iPosRadius
 //	DWORD	m_iRotation
+//	DWORD	m_iPosZ
 //	DWORD	m_iDevice
 //	DWORD	Life left
 //	CAttributeDataBlock m_Data
@@ -948,10 +952,7 @@ void COverlay::ReadFromStream (SLoadCtx &Ctx)
 	Ctx.pStream->Read((char *)&dwLoad, sizeof(DWORD));
 	m_pType = g_pUniverse->FindShipEnergyFieldType(dwLoad);
 	if (m_pType == NULL)
-		{
-		kernelDebugLogPattern("Unable to find overlay type: %x", dwLoad);
-		throw CException(ERR_FAIL);
-		}
+		throw CException(ERR_FAIL, strPatternSubst(CONSTLIT("Undefined overlay type: %08x"), dwLoad));
 
 	if (Ctx.dwVersion >= 38)
 		{
@@ -966,6 +967,15 @@ void COverlay::ReadFromStream (SLoadCtx &Ctx)
 		m_iPosAngle = 0;
 		m_iPosRadius = 0;
 		m_iRotation = 0;
+		}
+
+	if (Ctx.dwVersion >= 168)
+		{
+		Ctx.pStream->Read((char *)&m_iPosZ, sizeof(DWORD));
+		}
+	else
+		{
+		m_iPosZ = 0;
 		}
 
 	if (Ctx.dwVersion >= 63)
@@ -1202,6 +1212,7 @@ void COverlay::WriteToStream (IWriteStream *pStream)
 //	DWORD	m_iPosAngle
 //	DWORD	m_iPosRadius
 //	DWORD	m_iRotation
+//	DWORD	m_iPosZ
 //	DWORD	m_iDevice
 //	DWORD	m_iTick
 //	DWORD	Life left
@@ -1219,6 +1230,7 @@ void COverlay::WriteToStream (IWriteStream *pStream)
 	pStream->Write((char *)&m_iPosAngle, sizeof(DWORD));
 	pStream->Write((char *)&m_iPosRadius, sizeof(DWORD));
 	pStream->Write((char *)&m_iRotation, sizeof(DWORD));
+	pStream->Write((char *)&m_iPosZ, sizeof(DWORD));
 	pStream->Write((char *)&m_iDevice, sizeof(DWORD));
 	pStream->Write((char *)&m_iTick, sizeof(DWORD));
 	pStream->Write((char *)&m_iLifeLeft, sizeof(DWORD));

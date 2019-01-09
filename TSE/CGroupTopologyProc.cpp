@@ -79,6 +79,8 @@ ALERROR CGroupTopologyProc::OnInitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDe
 	ALERROR error;
 	int i;
 
+	//	LATER: Read m_bReduceNodeList so that we can choose that option.
+
 	//	Loop over all elements
 
 	for (i = 0; i < pDesc->GetContentElementCount(); i++)
@@ -110,7 +112,7 @@ ALERROR CGroupTopologyProc::OnInitFromXML (SDesignLoadCtx &Ctx, CXMLElement *pDe
 	return NOERROR;
 	}
 
-ALERROR CGroupTopologyProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CTopologyNodeList &NodeList, CString *retsError)
+ALERROR CGroupTopologyProc::OnProcess (SProcessCtx &Ctx, CTopologyNodeList &NodeList, CString *retsError)
 
 //	OnProcess
 //
@@ -128,11 +130,25 @@ ALERROR CGroupTopologyProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CT
 	//	If we have a criteria, the filter the nodes
 
 	CTopologyNodeList FilteredNodeList;
-	CTopologyNodeList *pNodeList = FilterNodes(Topology, m_Criteria, NodeList, FilteredNodeList);
+	CTopologyNodeList *pNodeList = FilterNodes(Ctx.Topology, m_Criteria, NodeList, FilteredNodeList);
 	if (pNodeList == NULL)
 		{
 		*retsError = CONSTLIT("Error filtering nodes");
 		return ERR_FAIL;
+		}
+
+	//	If we're reducing the node list, then make a copy of the node list.
+
+	bool bSavedReduceNodeList = Ctx.bReduceNodeList;
+	Ctx.bReduceNodeList = m_bReduceNodeList;
+
+	//	If we're reducing the list, then make a copy of it (because we don't 
+	//	want to change our input list).
+
+	if (m_bReduceNodeList && pNodeList == &NodeList)
+		{
+		FilteredNodeList = NodeList;
+		pNodeList = &FilteredNodeList;
 		}
 
 	//	Loop over all processors in order
@@ -140,9 +156,13 @@ ALERROR CGroupTopologyProc::OnProcess (CSystemMap *pMap, CTopology &Topology, CT
 
 	for (i = 0; i < m_Procs.GetCount(); i++)
 		{
-		if (error = m_Procs[i]->Process(pMap, Topology, *pNodeList, retsError))
+		if (error = m_Procs[i]->Process(Ctx, *pNodeList, retsError))
 			return error;
 		}
+
+	//	Restore
+
+	Ctx.bReduceNodeList = bSavedReduceNodeList;
 
 	return NOERROR;
 	}

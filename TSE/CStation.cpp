@@ -146,14 +146,128 @@ CStation::~CStation (void)
 		delete m_pTrade;
 	}
 
-void CStation::AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iLifeLeft, DWORD *retdwID)
+void CStation::Abandon (DestructionTypes iCause, const CDamageSource &Attacker, CWeaponFireDesc *pWeaponDesc)
+
+//	Abandon
+//
+//	Abandon the station.
+
+	{
+	//	Only works for stations that can be abandoned.
+
+	if (IsDestroyed() || IsImmutable() || IsAbandoned())
+		return;
+
+	m_Hull.SetHitPoints(0);
+
+	SDestroyCtx DestroyCtx;
+	DestroyCtx.pObj = this;
+	DestroyCtx.pDesc = pWeaponDesc;
+	DestroyCtx.Attacker = Attacker;
+	DestroyCtx.pWreck = this;
+	DestroyCtx.iCause = iCause;
+
+	//	Run OnDestroy script
+
+	m_Overlays.FireOnObjDestroyed(this, DestroyCtx);
+	FireItemOnObjDestroyed(DestroyCtx);
+	FireOnDestroy(DestroyCtx);
+
+	//	Station is destroyed. Take all the installed devices and turn
+	//	them into normal damaged items
+
+	CItemListManipulator Items(GetItemList());
+	while (Items.MoveCursorForward())
+		{
+		CItem Item = Items.GetItemAtCursor();
+
+		if (Item.IsInstalled())
+			{
+			//	Uninstall the device
+
+			int iDevSlot = Item.GetInstalled();
+			CInstalledDevice *pDevice = &m_pDevices[iDevSlot];
+			pDevice->Uninstall(this, Items);
+
+			//	Chance that the item is destroyed
+
+			if (Item.GetType()->IsVirtual() || mathRandom(1, 100) <= 50)
+				Items.DeleteAtCursor(1);
+			else
+				Items.SetDamagedAtCursor(true);
+
+			//	Reset cursor because we may have changed position
+
+			Items.ResetCursor();
+			}
+		}
+
+	InvalidateItemListAddRemove();
+
+	//	Alert others and retaliate, if necessary.
+	//
+	//	NOTE: We need to do this before <OnObjDestroyed> because we want 
+	//	that event to be able to override this behavior.
+	//	because we want those events to be able to override this behavior.
+
+	CSpaceObject *pOrderGiver = Attacker.GetOrderGiver();
+	if (pOrderGiver && pOrderGiver->CanAttack())
+		{
+		//	If we're a subordinate of some base, then let it handle the
+		//	retaliation.
+
+		if (m_pBase && !m_pBase->IsAbandoned() && !m_pBase->IsDestroyed())
+			m_pBase->OnSubordinateDestroyed(DestroyCtx);
+
+		//	We also retailiate
+
+		if (!IsAngryAt(pOrderGiver))
+			OnDestroyedByFriendlyFire(Attacker.GetObj(), pOrderGiver);
+		else
+			OnDestroyedByHostileFire(Attacker.GetObj(), pOrderGiver);
+		}
+
+	//	Tell all objects that we've been destroyed
+
+	for (int i = 0; i < GetSystem()->GetObjectCount(); i++)
+		{
+		CSpaceObject *pObj = GetSystem()->GetObject(i);
+
+		if (pObj && pObj != this)
+			pObj->OnStationDestroyed(DestroyCtx);
+		}
+
+	//	Tell the system to notify events that we've been destroyed
+
+	GetSystem()->OnStationDestroyed(DestroyCtx);
+
+	//	NOTE: We fire <OnObjDestroyed> AFTER OnStationDestroyed
+	//	so that script inside <OnObjDestroyed> can add orders
+	//	about the station (without getting clobbered in 
+	//	OnStationDestroyed).
+
+	NotifyOnObjDestroyed(DestroyCtx);
+
+	//	Tell the system and universe that a station has been destroyed so
+	//	that they handle timed events, etc.
+
+	GetSystem()->FireOnSystemObjDestroyed(DestroyCtx);
+	g_pUniverse->NotifyOnObjDestroyed(DestroyCtx);
+
+	//	Clear destination
+
+	if (IsAutoClearDestinationOnDestroy())
+		ClearPlayerDestination();
+	}
+
+void CStation::AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iPosZ, int iLifeLeft, DWORD *retdwID)
 
 //	AddOverlay
 //
 //	Adds an overlay to the ship
 
 	{
-	m_Overlays.AddField(this, pType, iPosAngle, iPosRadius, iRotation, iLifeLeft, retdwID);
+	m_Overlays.AddField(this, pType, iPosAngle, iPosRadius, iRotation, iPosZ, iLifeLeft, retdwID);
 
 	//	Recalc bonuses, etc.
 
@@ -992,11 +1106,6 @@ ALERROR CStation::CreateMapImage (void)
 //	Creates a small version of the station image
 
 	{
-	//	Only do this for stars and planets
-
-	if (m_Scale != scaleStar && m_Scale != scaleWorld)
-		return NOERROR;
-
 	//	Scale is 0.5 light-second per pixel (we compute the fraction of a full-sized image,
 	//	while is at 12500 klicks per pixel.)
 
@@ -1554,7 +1663,7 @@ ICCItem *CStation::GetProperty (CCodeChainCtx &Ctx, const CString &sName)
 		return CC.CreateBool(!m_fNoReinforcements);
 
 	else if (strEquals(sName, PROPERTY_SHOW_MAP_LABEL))
-		return CC.CreateBool(m_Scale != scaleStar && m_Scale != scaleWorld && m_pType->ShowsMapIcon() && !m_fNoMapLabel);
+		return CC.CreateBool(ShowMapLabel());
 
 	else if (strEquals(sName, PROPERTY_SHOW_MAP_ORBIT))
 		return CC.CreateBool(m_pMapOrbit && m_fShowMapOrbit);
@@ -2151,7 +2260,7 @@ EDamageResults CStation::OnDamage (SDamageCtx &Ctx)
 			&& !IsImmuneTo(CConditionSet::cndTimeStopped)
 			&& !IsTimeStopped())
 		{
-		AddOverlay(UNID_TIME_STOP_OVERLAY, 0, 0, 0, DEFAULT_TIME_STOP_TIME + mathRandom(0, 29));
+		AddOverlay(UNID_TIME_STOP_OVERLAY, 0, 0, 0, 0, DEFAULT_TIME_STOP_TIME + mathRandom(0, 29));
 
 		//	No damage
 
@@ -2171,103 +2280,8 @@ EDamageResults CStation::OnDamage (SDamageCtx &Ctx)
 
 	else
 		{
-		m_Hull.SetHitPoints(0);
-
-		SDestroyCtx DestroyCtx;
-		DestroyCtx.pObj = this;
-		DestroyCtx.pDesc = Ctx.pDesc;
-		DestroyCtx.Attacker = Ctx.Attacker;
-		DestroyCtx.pWreck = this;
-		DestroyCtx.iCause = Ctx.Damage.GetCause();
-
-		//	Run OnDestroy script
-
-		m_Overlays.FireOnObjDestroyed(this, DestroyCtx);
-		FireItemOnObjDestroyed(DestroyCtx);
-		FireOnDestroy(DestroyCtx);
-
-		//	Station is destroyed. Take all the installed devices and turn
-		//	them into normal damaged items
-
-		CItemListManipulator Items(GetItemList());
-		while (Items.MoveCursorForward())
-			{
-			CItem Item = Items.GetItemAtCursor();
-
-			if (Item.IsInstalled())
-				{
-				//	Uninstall the device
-
-				int iDevSlot = Item.GetInstalled();
-				CInstalledDevice *pDevice = &m_pDevices[iDevSlot];
-				pDevice->Uninstall(this, Items);
-
-				//	Chance that the item is destroyed
-
-				if (Item.GetType()->IsVirtual() || mathRandom(1, 100) <= 50)
-					Items.DeleteAtCursor(1);
-				else
-					Items.SetDamagedAtCursor(true);
-
-				//	Reset cursor because we may have changed position
-
-				Items.ResetCursor();
-				}
-			}
-
-		InvalidateItemListAddRemove();
-
-		//	Alert others and retaliate, if necessary.
-		//
-		//	NOTE: We need to do this before <OnObjDestroyed> because we want 
-		//	that event to be able to override this behavior.
-		//	because we want those events to be able to override this behavior.
-
-		if (pOrderGiver && pOrderGiver->CanAttack())
-			{
-			//	If we're a subordinate of some base, then let it handle the
-			//	retaliation.
-
-			if (m_pBase && !m_pBase->IsAbandoned() && !m_pBase->IsDestroyed())
-				m_pBase->OnSubordinateDestroyed(DestroyCtx);
-
-			//	We also retailiate
-
-			if (!IsAngryAt(pOrderGiver))
-				OnDestroyedByFriendlyFire(Ctx.Attacker.GetObj(), pOrderGiver);
-			else
-				OnDestroyedByHostileFire(Ctx.Attacker.GetObj(), pOrderGiver);
-			}
-
-		//	Tell all objects that we've been destroyed
-
-		for (int i = 0; i < GetSystem()->GetObjectCount(); i++)
-			{
-			CSpaceObject *pObj = GetSystem()->GetObject(i);
-
-			if (pObj && pObj != this)
-				pObj->OnStationDestroyed(DestroyCtx);
-			}
-
-		//	NOTE: We fire <OnObjDestroyed> AFTER OnStationDestroyed
-		//	so that script inside <OnObjDestroyed> can add orders
-		//	about the station (without getting clobbered in 
-		//	OnStationDestroyed).
-
-		NotifyOnObjDestroyed(DestroyCtx);
-
-		GetSystem()->FireOnSystemObjDestroyed(DestroyCtx);
-		g_pUniverse->NotifyOnObjDestroyed(DestroyCtx);
-
-		//	Clear destination
-
-		if (IsAutoClearDestinationOnDestroy())
-			ClearPlayerDestination();
-
-		//	Explosion effect
-
+		Abandon(Ctx.Damage.GetCause(), Ctx.Attacker, Ctx.pDesc);
 		CreateDestructionEffect();
-
 		return damageDestroyedAbandoned;
 		}
 
@@ -3095,20 +3109,44 @@ void CStation::OnPaintMap (CMapViewportCtx &Ctx, CG32bitImage &Dest, int x, int 
 
 		if (m_Scale == scaleStructure && m_rMass > 100000.0)
 			{
-			if (IsActiveStargate())
+			if (Ctx.IsPaintStationImagesEnabled())
 				{
-				Dest.DrawDot(x, y, rgbColor, markerSmallSquare);
-				Dest.DrawDot(x, y, rgbColor, markerMediumCross);
-				}
-			else if (!IsAbandoned() || IsImmutable())
-				{
-				Dest.DrawDot(x+1, y+1, 0, markerSmallSquare);
-				Dest.DrawDot(x, y, rgbColor, markerSmallFilledSquare);
+				if (m_MapImage.IsEmpty())
+					CreateMapImage();
+
+				if (!IsAbandoned() || IsImmutable())
+					{
+					Dest.Blt(0, 0, m_MapImage.GetWidth(), m_MapImage.GetHeight(), 255,
+							m_MapImage,
+							x - (m_MapImage.GetWidth() / 2),
+							y - (m_MapImage.GetHeight() / 2));
+					}
+				else
+					{
+					CGDraw::BltGray(Dest,
+							x - (m_MapImage.GetWidth() / 2),
+							y - (m_MapImage.GetHeight() / 2),
+							m_MapImage,
+							0, 0, m_MapImage.GetWidth(), m_MapImage.GetHeight(), 0x80);
+					}
 				}
 			else
 				{
-				Dest.DrawDot(x+1, y+1, 0, markerSmallSquare);
-				Dest.DrawDot(x, y, rgbColor, markerSmallSquare);
+				if (IsActiveStargate())
+					{
+					Dest.DrawDot(x, y, rgbColor, markerSmallSquare);
+					Dest.DrawDot(x, y, rgbColor, markerMediumCross);
+					}
+				else if (!IsAbandoned() || IsImmutable())
+					{
+					Dest.DrawDot(x+1, y+1, 0, markerSmallSquare);
+					Dest.DrawDot(x, y, rgbColor, markerSmallFilledSquare);
+					}
+				else
+					{
+					Dest.DrawDot(x+1, y+1, 0, markerSmallSquare);
+					Dest.DrawDot(x, y, rgbColor, markerSmallSquare);
+					}
 				}
 			}
 		else

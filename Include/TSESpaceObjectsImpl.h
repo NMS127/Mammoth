@@ -995,6 +995,7 @@ class CShip : public CSpaceObject
 		int GetMissileCount (void);
 		ALERROR RemoveItemAsDevice (CItemListManipulator &ItemList);
 		DeviceNames SelectWeapon (int iDev, int iVariant);
+		DeviceNames SelectWeapon (const CItem &Item);
 		void SetCursorAtDevice (CItemListManipulator &ItemList, int iDev);
 		void SetCursorAtNamedDevice (CItemListManipulator &ItemList, DeviceNames iDev);
 		void SetWeaponTriggered (DeviceNames iDev, bool bTriggered = true);
@@ -1032,16 +1033,16 @@ class CShip : public CSpaceObject
 		inline int Angle2Direction (int iAngle) const { return m_pClass->Angle2Direction(iAngle); }
 		inline int AlignToRotationAngle (int iAngle) const { return m_pClass->AlignToRotationAngle(iAngle); }
 		inline int GetRotationAngle (void) { return m_pClass->GetRotationAngle(); }
-        inline const CIntegralRotationDesc &GetRotationDesc (void) const { return m_Perf.GetRotationDesc(); }
+        inline const CIntegralRotationDesc &GetRotationDesc (void) const { return m_Perf.GetIntegralRotationDesc(); }
 		inline int GetRotationRange (void) { return m_pClass->GetRotationRange(); }
 		inline const CIntegralRotation &GetRotationState (void) const { return m_Rotation; }
-		inline EManeuverTypes GetManeuverToFace (int iAngle) const { return m_Rotation.GetManeuverToFace(m_Perf.GetRotationDesc(), iAngle); }
+		inline EManeuverTypes GetManeuverToFace (int iAngle) const { return m_Rotation.GetManeuverToFace(m_Perf.GetIntegralRotationDesc(), iAngle); }
 		inline Metric GetThrust (void) const { return m_Perf.GetDriveDesc().GetThrust(); }
 		inline Metric GetThrustProperty (void) const { return m_Perf.GetDriveDesc().GetThrustProperty(); }
 		Metric GetMaxAcceleration (void);
 		inline bool IsInertialess (void) { return m_Perf.GetDriveDesc().IsInertialess(); }
 		inline bool IsMainDriveDamaged (void) const { return m_iDriveDamagedTimer != 0; }
-		inline bool IsPointingTo (int iAngle) { return m_Rotation.IsPointingTo(m_Perf.GetRotationDesc(), iAngle); }
+		inline bool IsPointingTo (int iAngle) { return m_Rotation.IsPointingTo(m_Perf.GetIntegralRotationDesc(), iAngle); }
 		inline void SetMaxSpeedEmergency (void) { m_fHalfSpeed = false; m_fEmergencySpeed = true; m_fQuarterSpeed = false; CalcPerformance(); }
         inline void SetMaxSpeedHalf (void) { m_fHalfSpeed = true; m_fEmergencySpeed = false; m_fQuarterSpeed = false; CalcPerformance(); }
         inline void SetMaxSpeedQuarter (void) { m_fHalfSpeed = false; m_fEmergencySpeed = false; m_fQuarterSpeed = true; CalcPerformance(); }
@@ -1056,13 +1057,13 @@ class CShip : public CSpaceObject
 		inline void SetDestroyInGate (void) { m_fDestroyInGate = true; }
 		inline void SetEncounterInfo (CStationType *pEncounterInfo) { m_pEncounterInfo = pEncounterInfo; }
 		inline void SetPlayerWingman (bool bIsWingman) const { m_pController->SetPlayerWingman(bIsWingman); }
-		inline void SetRotation (int iAngle) { m_Rotation.SetRotationAngle(m_Perf.GetRotationDesc(), iAngle); }
+		inline void SetRotation (int iAngle) { m_Rotation.SetRotationAngle(m_Perf.GetIntegralRotationDesc(), iAngle); }
 		void Undock (void);
 
 		//	CSpaceObject virtuals
 
 		virtual bool AbsorbWeaponFire (CInstalledDevice *pWeapon) override;
-		virtual void AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iLifetime, DWORD *retdwID = NULL) override;
+		virtual void AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iPosZ, int iLifetime, DWORD *retdwID = NULL) override;
 		using CSpaceObject::AddOverlay;
 		virtual CTradingDesc *AllocTradeDescOverride (void) override;
 		virtual CShip *AsShip (void) override { return this; }
@@ -1095,6 +1096,8 @@ class CShip : public CSpaceObject
 		virtual CDesignType *GetCharacter (void) const override { return m_pCharacter; }
 		virtual DWORD GetClassUNID (void) override { return m_pClass->GetUNID(); }
 		virtual int GetCombatPower (void) override;
+		virtual int GetCounterValue (void) override { return m_iCounterValue; }
+		virtual int GetCounterIncrementRate(void) override { return m_pClass->GetHullDesc().GetCounterIncrementRate(); }
 		virtual CCurrencyBlock *GetCurrencyBlock (bool bCreate = false) override;
 		virtual int GetCyberDefenseLevel (void) override { return m_pClass->GetCyberDefenseLevel(); }
 		virtual int GetDamageEffectiveness (CSpaceObject *pAttacker, CInstalledDevice *pWeapon) override;
@@ -1118,6 +1121,7 @@ class CShip : public CSpaceObject
 		virtual int GetLevel (void) const override { return m_pClass->GetLevel(); }
 		virtual Metric GetMass (void) const override;
 		virtual int GetMaxPower (void) const override;
+		virtual int GetMaxCounterValue (void) override { return m_pClass->GetHullDesc().GetMaxCounter(); };
 		virtual CString GetNamePattern (DWORD dwNounPhraseFlags = 0, DWORD *retdwFlags = NULL) const override;
 		virtual const CInstalledDevice *GetNamedDevice (DeviceNames iDev) const override;
 		virtual CInstalledDevice *GetNamedDevice (DeviceNames iDev) override;
@@ -1127,7 +1131,7 @@ class CShip : public CSpaceObject
 		virtual CSystem::LayerEnum GetPaintLayer (void) override { return (m_fShipCompartment ? CSystem::layerOverhang : CSystem::layerShips); }
 		virtual int GetPerception (void) override;
 		virtual ICCItem *GetProperty (CCodeChainCtx &Ctx, const CString &sName) override;
-		virtual int GetRotation (void) const override { return m_Rotation.GetRotationAngle(m_Perf.GetRotationDesc()); }
+		virtual int GetRotation (void) const override { return m_Rotation.GetRotationAngle(m_Perf.GetIntegralRotationDesc()); }
 		virtual ScaleTypes GetScale (void) const override { return scaleShip; }
 		virtual int GetScore (void) override { return m_pClass->GetScore(); }
 		virtual CXMLElement *GetScreen (const CString &sName) override { return m_pClass->GetScreen(sName); }
@@ -1145,6 +1149,7 @@ class CShip : public CSpaceObject
 		virtual void GetVisibleDamageDesc (SVisibleDamage &Damage) override;
 		virtual bool HasAttribute (const CString &sAttribute) const override;
 		virtual bool ImageInObject (const CVector &vObjPos, const CObjectImageArray &Image, int iTick, int iRotation, const CVector &vImagePos) override;
+		virtual void IncCounterValue(int iCounterValue) override { m_iCounterValue += iCounterValue; }
 		virtual bool IsAnchored (void) const override { return (GetDockedObj() != NULL) || IsManuallyAnchored(); }
 		virtual bool IsAngryAt (CSpaceObject *pObj) const override;
 		virtual bool IsAttached (void) const override { return m_fShipCompartment; }
@@ -1168,7 +1173,6 @@ class CShip : public CSpaceObject
 		virtual void OnDeviceStatus (CInstalledDevice *pDev, CDeviceClass::DeviceNotificationTypes iEvent) override;
 		virtual bool OnDestroyCheck (DestructionTypes iCause, const CDamageSource &Attacker) override;
 		virtual void OnDocked (CSpaceObject *pObj) override;
-		virtual void OnDockedObjChanged (CSpaceObject *pLocation) override;
 		virtual void OnDockingPortDestroyed (void) override;
 		virtual bool OnGateCheck (CTopologyNode *pDestNode, const CString &sDestEntryPoint, CSpaceObject *pGateObj) override;
 		virtual void OnHitByDeviceDamage (void) override;
@@ -1200,11 +1204,13 @@ class CShip : public CSpaceObject
 		virtual bool SetAbility (Abilities iAbility, AbilityModifications iModification, int iDuration, DWORD dwOptions) override;
 		virtual int SetAISettingInteger (const CString &sSetting, int iValue) override { return m_pController->SetAISettingInteger(sSetting, iValue); }
 		virtual CString SetAISettingString (const CString &sSetting, const CString &sValue) override { return m_pController->SetAISettingString(sSetting, sValue); }
+		virtual void SetCounterValue(int iCounterValue) override { m_iCounterValue = iCounterValue; }
 		virtual void SetFireDelay (CInstalledDevice *pWeapon, int iDelay = -1) override;
 		virtual void SetIdentified (bool bIdentified = true) override { m_fIdentified = bIdentified; }
         virtual void SetKnown (bool bKnown = true) override { m_fKnown = bKnown; }
 		virtual void SetName (const CString &sName, DWORD dwFlags = 0) override;
 		virtual bool SetProperty (const CString &sName, ICCItem *pValue, CString *retsError) override;
+        virtual bool ShowMapLabel (void) const { return (m_fShowMapLabel ? true : false); }
 		virtual void Suspend (void) override { Undock(); m_fManualSuspended = true; SetCannotBeHit(); }
 		virtual void Undock (CSpaceObject *pObj) override;
 		virtual void UpdateArmorItems (void) override;
@@ -1321,6 +1327,7 @@ class CShip : public CSpaceObject
 		mutable Metric m_rItemMass;				//	Total mass of all items (including installed)
 		mutable Metric m_rCargoMass;			//	Mass of cargo items (not including installed)
 		int m_iStealth;							//	Computed stealth
+		int m_iCounterValue;					//	Heat/capacitor counter value
 
 		CSpaceObject *m_pDocked;				//	If not NULL, object we are docked to.
 		CSpaceObject *m_pExitGate;				//	If not NULL, gate we are about to exit.
@@ -1404,6 +1411,7 @@ class CStation : public CSpaceObject
 				CString *retsError = NULL);
 		virtual ~CStation (void);
 
+		void Abandon (DestructionTypes iCause, const CDamageSource &Attacker, CWeaponFireDesc *pWeaponDesc = NULL);
 		inline void ClearFireReconEvent (void) { m_fFireReconEvent = false; }
 		inline void ClearReconned (void) { m_fReconned = false; }
 		inline const CStationHull &GetHull (void) const { return m_Hull; }
@@ -1433,7 +1441,7 @@ class CStation : public CSpaceObject
 
 		//	CSpaceObject virtuals
 
-		virtual void AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iLifetime, DWORD *retdwID = NULL) override;
+		virtual void AddOverlay (COverlayType *pType, int iPosAngle, int iPosRadius, int iRotation, int iPosZ, int iLifetime, DWORD *retdwID = NULL) override;
 		using CSpaceObject::AddOverlay;
 		virtual void AddSubordinate (CSpaceObject *pSubordinate) override;
 		virtual CTradingDesc *AllocTradeDescOverride (void) override;
@@ -1539,6 +1547,7 @@ class CStation : public CSpaceObject
 		virtual void SetMapLabelPos (CMapLabelArranger::EPositions iPos) override { m_iMapLabelPos = iPos; m_sMapLabel = NULL_STR; }
 		virtual void SetName (const CString &sName, DWORD dwFlags = 0) override;
 		virtual bool SetProperty (const CString &sName, ICCItem *pValue, CString *retsError) override;
+        virtual bool ShowMapLabel (void) const { return (m_Scale != scaleStar && m_Scale != scaleWorld && m_pType->ShowsMapIcon() && !m_fNoMapLabel); }
         virtual bool ShowMapOrbit (void) const override { return (m_fShowMapOrbit ? true : false); }
         virtual bool ShowStationDamage (void) const override { return m_Hull.IsWrecked(); }
 		virtual bool SupportsGating (void) override { return IsActiveStargate(); }
